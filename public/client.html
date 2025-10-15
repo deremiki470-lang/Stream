@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Client - Support QR</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; display:flex; align-items:center; justify-content:center; flex-direction:column; height:100vh; margin:0; }
+    #qr { margin-top:12px; }
+    #msg { color:#333; }
+  </style>
+</head>
+<body>
+  <img src="https://i.postimg.cc/WzDHPTPX/logo.jpg" style="width:100px;margin-bottom:8px" alt="logo">
+  <h2 id="msg">Verifying session...</h2>
+  <div id="qr"></div>
+
+<script>
+(async () => {
+  const msg = document.getElementById('msg');
+  const qrDiv = document.getElementById('qr');
+
+  // Step 1 — ask the server to verify cookie
+  try {
+    const res = await fetch('/api/verify', { credentials: 'same-origin' });
+    const obj = await res.json();
+    if (!obj.valid) {
+      // This will trigger a redirect to /login by the server on next page load
+      msg.textContent = 'Forbidden: session invalid. Please refresh.';
+      return;
+    }
+    // valid
+    msg.textContent = `Welcome, ${obj.username} — connecting...`;
+  } catch (err) {
+    msg.textContent = 'Server verification failed. Try again later.';
+    console.error(err);
+    return;
+  }
+
+  // Step 2 — connect via Socket.IO and join as client
+  const socket = io();
+  socket.emit('join', 'client');
+
+  socket.on('connected', (ok) => {
+    if (!ok) {
+      msg.textContent = 'Disconnected / not streaming';
+      qrDiv.innerHTML = '';
+      return;
+    }
+    msg.textContent = 'Connected — waiting for QR...';
+  });
+
+  // Admin presence indicator
+  let adminPresent = true;
+  function setAdminPresent(p) {
+    adminPresent = !!p;
+    if (!adminPresent) {
+      msg.textContent = 'Reconnecting... waiting for admin to join';
+      qrDiv.innerHTML = '';
+    }
+  }
+
+  socket.on('admin_present', (present) => {
+    setAdminPresent(present);
+  });
+
+  // If admin is not present when we connect, keep retrying the verification every 3s
+  const retryAdminLoop = setInterval(async () => {
+    if (adminPresent) return;
+    try {
+      const res = await fetch('/api/verify', { credentials: 'same-origin' });
+      const obj = await res.json();
+      if (!obj.valid) return;
+      // re-emit join to register again; server will tell us if admin exists
+      socket.emit('join', 'client');
+    } catch (e) { /* ignore */ }
+  }, 3000);
+
+  socket.on('qr_update', (value) => {
+    qrDiv.innerHTML = '';
+    if (value) {
+      msg.textContent = 'QR Active';
+      new QRCode(qrDiv, { text: value, width: 256, height: 256 });
+    } else {
+      msg.textContent = 'QR Hidden or not available';
+    }
+  });
+
+  socket.on('forbidden', (m) => {
+    msg.textContent = m || 'Forbidden';
+    setTimeout(()=> socket.disconnect(), 100);
+  });
+
+  // ping/pong for server side latency measurement
+  socket.on('ping', (t) => socket.emit('pong', t));
+})();
+</script>
+</body>
+</html>

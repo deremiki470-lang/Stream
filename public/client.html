@@ -7,9 +7,9 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <style>
-    body { font-family: Arial, sans-serif; display:flex; align-items:center; justify-content:center; flex-direction:column; height:100vh; margin:0; }
+    body { font-family: Arial, sans-serif; display:flex; align-items:center; justify-content:center; flex-direction:column; height:100vh; margin:0; background:#f9f9f9; }
     #qr { margin-top:12px; }
-    #msg { color:#333; text-align:center; }
+    #msg { color:#333; text-align:center; font-size:18px; }
   </style>
 </head>
 <body>
@@ -22,16 +22,13 @@
   const msg = document.getElementById('msg');
   const qrDiv = document.getElementById('qr');
 
-  // Trin 1 — bed serveren om at bekræfte cookie
   try {
     const res = await fetch('/api/verify', { credentials: 'same-origin' });
     const obj = await res.json();
     if (!obj.valid) {
-      // Dette vil få serveren til at omdirigere til /login ved næste sideindlæsning
       msg.textContent = 'Adgang nægtet: Ugyldig session. Opdater siden.';
       return;
     }
-    // gyldig
     msg.textContent = `Velkommen, ${obj.username} — opretter forbindelse...`;
   } catch (err) {
     msg.textContent = 'Serverbekræftelse mislykkedes. Prøv igen senere.';
@@ -39,7 +36,6 @@
     return;
   }
 
-  // Trin 2 — opret forbindelse via Socket.IO og tilslut som klient
   const socket = io();
   socket.emit('join', 'client');
 
@@ -52,30 +48,24 @@
     msg.textContent = 'Tilsluttet — venter på QR...';
   });
 
-  // Indikator for administratorens tilstedeværelse
   let adminPresent = true;
   function setAdminPresent(p) {
     adminPresent = !!p;
     if (!adminPresent) {
-      msg.textContent = 'Genopretter forbindelse... venter på administrator';
+      msg.textContent = 'Venter på administrator...';
       qrDiv.innerHTML = '';
     }
   }
 
-  socket.on('admin_present', (present) => {
-    setAdminPresent(present);
-  });
+  socket.on('admin_present', (present) => setAdminPresent(present));
 
-  // Hvis administratoren ikke er til stede, prøv igen hver 3. sekund
-  const retryAdminLoop = setInterval(async () => {
+  setInterval(async () => {
     if (adminPresent) return;
     try {
       const res = await fetch('/api/verify', { credentials: 'same-origin' });
       const obj = await res.json();
-      if (!obj.valid) return;
-      // send "join" igen for at registrere klienten på ny
-      socket.emit('join', 'client');
-    } catch (e) { /* ignorer fejl */ }
+      if (obj.valid) socket.emit('join', 'client');
+    } catch (_) {}
   }, 3000);
 
   socket.on('qr_update', (value) => {
@@ -83,9 +73,7 @@
     if (value) {
       msg.textContent = 'QR aktiv';
       new QRCode(qrDiv, { text: value, width: 256, height: 256 });
-    } else {
-      msg.textContent = 'QR skjult eller ikke tilgængelig';
-    }
+    } else msg.textContent = 'QR skjult eller ikke tilgængelig';
   });
 
   socket.on('forbidden', (m) => {
@@ -93,7 +81,6 @@
     setTimeout(()=> socket.disconnect(), 100);
   });
 
-  // ping/pong til serverens latenstidsmåling
   socket.on('ping', (t) => socket.emit('pong', t));
 })();
 </script>

@@ -6,6 +6,7 @@ const axios = require('axios');
 
 const app = express();
 
+// Optional cookie parser
 let cookieParser;
 try {
   cookieParser = require('cookie-parser');
@@ -18,7 +19,7 @@ app.use(express.urlencoded({ extended: true }));
 const server = http.createServer(app);
 const io = new Server(server, { pingInterval: 10000, pingTimeout: 5000 });
 
-// --- Helpers ---
+// ---------- Helpers ----------
 function cookieExpiryAtUTCMidnight() {
   const d = new Date();
   d.setUTCHours(23, 59, 59, 999);
@@ -37,10 +38,18 @@ function parseCookies(header) {
   return list;
 }
 
+// Convert 2-letter country code to flag emoji
+function flagEmoji(code) {
+  if (!code || code.length !== 2) return '';
+  return String.fromCodePoint(...[...code.toUpperCase()].map(c => 0x1F1E6 - 65 + c.charCodeAt(0)));
+}
+
+// ---------- Static ----------
 app.use(express.static(path.join(__dirname, 'public')));
 
-// --- Routes ---
+// ---------- Routes ----------
 app.get('/login', (_, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
+
 app.post('/api/login', (req, res) => {
   const { username } = req.body;
   if (!username || username.trim() === '') return res.status(400).send('Username is required.');
@@ -51,18 +60,20 @@ app.post('/api/login', (req, res) => {
   });
   res.redirect('/');
 });
+
 app.get('/api/verify', (req, res) => {
   const u = req.cookies.username;
   if (u) return res.json({ valid: true, username: u });
   res.json({ valid: false });
 });
+
 app.get('/broadcast', (_, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.get('/', (req, res) => {
   if (!req.cookies.username) return res.redirect('/login');
   res.sendFile(path.join(__dirname, 'public', 'client.html'));
 });
 
-// --- SOCKET.IO ---
+// ---------- SOCKET.IO ----------
 let adminSocket = null;
 let clients = new Map();
 
@@ -71,24 +82,31 @@ function getClientList() {
     id,
     username: c.username,
     ip: c.ip,
-    isp: c.isp,
+    city: c.city,
+    region: c.region,
     country: c.country,
+    countryFlag: c.countryFlag,
+    isp: c.isp,
     vpn: c.vpn,
     ping: c.ping,
   }));
 }
 
 io.on('connection', socket => {
-  // --- Guest connect ---
+  // ---------- Guest connection ----------
   socket.on('join_guest', async guestId => {
     const ip = socket.handshake.headers['x-forwarded-for']?.split(',')[0] || socket.handshake.address;
-
-    let isp = 'Pending login', country = 'Unknown', vpn = false;
+    let isp = 'Pending login', city = 'Unknown', region = 'Unknown', country = 'Unknown', flag = '', vpn = false;
     try {
-      const r = await axios.get(`http://ip-api.com/json/${ip}?fields=status,country,isp,proxy,hosting,query`);
+      const r = await axios.get(
+        `http://ip-api.com/json/${ip}?fields=status,country,countryCode,regionName,city,isp,proxy,hosting`
+      );
       if (r.data.status === 'success') {
         isp = normalizeISP(r.data.isp);
+        city = r.data.city || 'Unknown';
+        region = r.data.regionName || 'Unknown';
         country = r.data.country || 'Unknown';
+        flag = flagEmoji(r.data.countryCode);
         vpn = r.data.proxy || r.data.hosting;
       }
     } catch {}
@@ -97,16 +115,20 @@ io.on('connection', socket => {
       ping: 0,
       username: `${guestId} (Not logged in yet)`,
       ip,
-      isp,
+      city,
+      region,
       country,
+      countryFlag: flag,
+      isp,
       vpn,
     });
+
     socket.join('clients');
     if (adminSocket) adminSocket.emit('client_list', getClientList());
-    console.log(`Guest joined: ${guestId} IP=${ip} ISP=${isp} Country=${country} VPN=${vpn}`);
+    console.log(`Guest joined: ${guestId} IP=${ip} ${city}, ${region}, ${country} VPN=${vpn}`);
   });
 
-  // --- Client join ---
+  // ---------- Client (after login) ----------
   socket.on('join', async role => {
     if (role === 'admin') {
       if (adminSocket) {
@@ -131,6 +153,7 @@ io.on('connection', socket => {
       return;
     }
 
+    // Upgrade guest to user
     if (clients.has(socket.id)) {
       const prev = clients.get(socket.id);
       if (prev.username.includes('Guest-')) {
@@ -141,22 +164,27 @@ io.on('connection', socket => {
     }
 
     const ip = socket.handshake.headers['x-forwarded-for']?.split(',')[0] || socket.handshake.address;
-    let isp = 'Unknown', country = 'Unknown', vpn = false;
+    let isp = 'Unknown', city = 'Unknown', region = 'Unknown', country = 'Unknown', flag = '', vpn = false;
 
     try {
-      const r = await axios.get(`http://ip-api.com/json/${ip}?fields=status,country,isp,proxy,hosting,query`);
+      const r = await axios.get(
+        `http://ip-api.com/json/${ip}?fields=status,country,countryCode,regionName,city,isp,proxy,hosting`
+      );
       if (r.data.status === 'success') {
         isp = normalizeISP(r.data.isp);
-        country = r.data.country;
+        city = r.data.city || 'Unknown';
+        region = r.data.regionName || 'Unknown';
+        country = r.data.country || 'Unknown';
+        flag = flagEmoji(r.data.countryCode);
         vpn = r.data.proxy || r.data.hosting;
       }
     } catch {}
 
-    clients.set(socket.id, { ping: 0, username, ip, isp, country, vpn });
+    clients.set(socket.id, { ping: 0, username, ip, city, region, country, countryFlag: flag, isp, vpn });
     socket.join('clients');
     socket.emit('connected', true);
     if (adminSocket) adminSocket.emit('client_list', getClientList());
-    console.log(`Client ${username} connected IP=${ip} ISP=${isp} ${country} VPN=${vpn}`);
+    console.log(`User ${username} IP=${ip} ${city}, ${region}, ${country} VPN=${vpn}`);
   });
 
   socket.on('pong', t => {
@@ -177,7 +205,7 @@ io.on('connection', socket => {
       const name = c ? c.username : 'Unknown';
       clients.delete(socket.id);
       if (adminSocket) adminSocket.emit('client_list', getClientList());
-      console.log(`Disconnected: ${name} (${socket.id}) reason=${reason}`);
+      console.log(`Disconnected: ${name} reason=${reason}`);
     }
   });
 });

@@ -97,6 +97,23 @@ function getClientList() {
 }
 
 io.on('connection', (socket) => {
+  // ---------- GUEST CONNECTION ----------
+  socket.on('join_guest', (guestId) => {
+    const ip = socket.handshake.headers['x-forwarded-for']?.split(',')[0] || socket.handshake.address;
+    clients.set(socket.id, {
+      ping: 0,
+      username: guestId + ' (not logged in yet)',
+      ip,
+      isp: 'Pending login',
+      country: 'Unknown',
+      vpn: false,
+    });
+    socket.join('clients');
+    if (adminSocket) adminSocket.emit('client_list', getClientList());
+    console.log(`Guest joined: ${guestId} (${socket.id}) IP=${ip}`);
+  });
+
+  // ---------- LOGIN ROLE HANDLING ----------
   socket.on('join', (role) => {
     // ---------- ADMIN ----------
     if (role === 'admin') {
@@ -124,10 +141,18 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Get IP address
+      // Upgrade guest to real user if applicable
+      if (clients.has(socket.id)) {
+        const prev = clients.get(socket.id);
+        if (prev.username.startsWith('Guest-')) {
+          clients.set(socket.id, { ...prev, username });
+          if (adminSocket) adminSocket.emit('client_list', getClientList());
+          console.log(`Guest upgraded to user: ${username} (${socket.id})`);
+        }
+      }
+
       const ip = socket.handshake.headers['x-forwarded-for']?.split(',')[0] || socket.handshake.address;
 
-      // Query IP details
       axios
         .get(`http://ip-api.com/json/${ip}?fields=status,message,country,isp,org,as,proxy,hosting,query`)
         .then((res) => {
@@ -135,20 +160,54 @@ io.on('connection', (socket) => {
             res.data.status === 'success'
               ? res.data
               : { isp: 'Unknown', country: 'Unknown', hosting: false, proxy: false, query: ip };
+
+          // --- ISP Enhancement / Normalization ---
+          let ispName = info.isp || 'Unknown';
+          const ispLower = ispName.toLowerCase();
+
+          const knownISPs = [
+            { match: ['ethionet', 'ethiotelecom', 'ethio telecom'], name: 'Ethio Telecom' },
+            { match: ['safaricom', 'vodafone', 'kenya telecom'], name: 'Safaricom Ethiopia PLC' },
+            { match: ['telecom egypt', 'etisalat'], name: 'Telecom Egypt / Etisalat' },
+            { match: ['mtn', 'mtn group'], name: 'MTN Group' },
+            { match: ['airtel', 'zain'], name: 'Airtel Africa' },
+            { match: ['google llc', 'google'], name: 'Google Cloud / Workspace' },
+            { match: ['amazon', 'aws'], name: 'Amazon Web Services (AWS)' },
+            { match: ['microsoft', 'azure'], name: 'Microsoft Azure' },
+            { match: ['oracle'], name: 'Oracle Cloud Infrastructure' },
+            { match: ['ovh'], name: 'OVH SAS / OVHcloud' },
+            { match: ['hetzner'], name: 'Hetzner Online GmbH' },
+            { match: ['digitalocean'], name: 'DigitalOcean LLC' },
+            { match: ['cloudflare'], name: 'Cloudflare, Inc.' },
+            { match: ['starlink'], name: 'Starlink Satellite Internet' },
+            { match: ['hostinger'], name: 'Hostinger International Ltd.' },
+            { match: ['contabo'], name: 'Contabo GmbH' },
+            { match: ['linode'], name: 'Linode (Akamai Cloud)' },
+          ];
+
+          for (const isp of knownISPs) {
+            if (isp.match.some(keyword => ispLower.includes(keyword))) {
+              ispName = isp.name;
+              break;
+            }
+          }
+
           clients.set(socket.id, {
             ping: 0,
             username,
             ip: info.query,
-            isp: info.isp,
+            isp: ispName,
             country: info.country,
             vpn: info.hosting || info.proxy,
           });
+
           socket.join('clients');
           socket.emit('connected', true);
           if (isStreaming && !isHidden && currentQrValue) socket.emit('qr_update', currentQrValue);
           if (adminSocket) adminSocket.emit('client_list', getClientList());
+
           console.log(
-            `Client connected: ${username} (${socket.id}) IP=${info.query} ISP=${info.isp} Country=${info.country} VPN=${info.hosting || info.proxy}`
+            `Client connected: ${username} (${socket.id}) IP=${info.query} ISP=${ispName} Country=${info.country} VPN=${info.hosting || info.proxy}`
           );
         })
         .catch((err) => {

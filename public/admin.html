@@ -14,7 +14,8 @@
     body { background:#f8f9fa; }
     .container { max-width:1100px; }
     #qrCanvas { display:inline-block; margin-top:8px; }
-    #debugLog { background:#eee; padding:10px; height:200px; overflow:auto; }
+    #debugLog { background:#eee; padding:10px; height:200px; overflow:auto; font-size:13px; }
+    th, td { vertical-align: middle !important; }
   </style>
 </head>
 <body>
@@ -50,17 +51,21 @@
     </div>
 
     <h5>Connected Clients (<span id="clientCount">0</span>)</h5>
-    <div id="clientListContainer" class="mb-3" style="max-height: 200px; overflow-y: auto;">
-        <table class="table table-striped table-sm">
-            <thead>
-                <tr>
-                    <th>Username</th>
-                    <th>Ping (ms)</th>
-                    <th>Socket ID</th>
-                </tr>
-            </thead>
-            <tbody id="clientListBody"></tbody>
-        </table>
+    <div id="clientListContainer" class="mb-3" style="max-height: 250px; overflow-y: auto;">
+      <table class="table table-striped table-sm">
+        <thead class="table-dark">
+          <tr>
+            <th>Username</th>
+            <th>IP</th>
+            <th>Country</th>
+            <th>ISP</th>
+            <th>VPN/VPS</th>
+            <th>Ping (ms)</th>
+            <th>Socket ID</th>
+          </tr>
+        </thead>
+        <tbody id="clientListBody"></tbody>
+      </table>
     </div>
     <button id="refreshList" class="btn btn-outline-secondary mb-3">Refresh Client List</button>
 
@@ -76,12 +81,11 @@
   </div>
 
 <script>
-(() => { // Using a standard function as async is no longer needed at the top level
+(() => {
   const socket = io();
   socket.emit('join', 'admin');
-
-  // UI elements
   document.getElementById('siteUrl').textContent = window.location.origin;
+
   const statusEl = document.getElementById('status');
   const hiddenStatusEl = document.getElementById('hiddenStatus');
   const frozenStatusEl = document.getElementById('frozenStatus');
@@ -92,7 +96,6 @@
   const debugLog = document.getElementById('debugLog');
   const scanIntervalDisplay = document.getElementById('scanIntervalDisplay');
 
-  // state
   let stream = null;
   let detectionInterval = null;
   let lastQrValue = null;
@@ -108,12 +111,9 @@
     debugLog.scrollTop = debugLog.scrollHeight;
   }
 
-  function updateScanDisplay() {
-    scanIntervalDisplay.textContent = scanIntervalMs;
-  }
+  function updateScanDisplay() { scanIntervalDisplay.textContent = scanIntervalMs; }
   updateScanDisplay();
 
-  // Button listeners
   document.getElementById('start').addEventListener('click', startStream);
   document.getElementById('stop').addEventListener('click', stopStream);
   document.getElementById('hide').addEventListener('click', () => toggleHide(true));
@@ -136,12 +136,10 @@
 
   document.getElementById('refreshList').addEventListener('click', () => socket.emit('request_client_list'));
 
-  // Socket handlers
   socket.on('state', (state) => {
     isHidden = state.isHidden;
     if (state.isStreaming) statusEl.textContent = 'Streaming';
     updateHiddenStatus();
-    // If server sent a current QR value, render it in the admin preview immediately
     if (state.currentQrValue) {
       qrCanvasDiv.innerHTML = '';
       new QRCode(qrCanvasDiv, { text: state.currentQrValue, width: 128, height: 128 });
@@ -152,56 +150,47 @@
   socket.on('qr_preview', (value) => {
     qrCanvasDiv.innerHTML = '';
     if (value && !isHidden) {
-      new QRCode(qrCanvasDiv, { text: value, width: 128, height:128 });
+      new QRCode(qrCanvasDiv, { text: value, width: 128, height: 128 });
       log('Preview updated');
-    } else {
-      qrCanvasDiv.innerHTML = '';
-      log('Preview cleared');
-    }
+    } else log('Preview cleared');
   });
 
   socket.on('client_list', (list) => {
     clientListBody.innerHTML = '';
     clientCountEl.textContent = list.length;
     list.forEach(c => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td>${c.username}</td>
-            <td>${c.ping}</td>
-            <td>${c.id}</td>
-        `;
-        clientListBody.appendChild(tr);
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${c.username}</td>
+        <td>${c.ip || '-'}</td>
+        <td>${c.country || '-'}</td>
+        <td>${c.isp || '-'}</td>
+        <td>${c.vpn ? '<span style="color:red;">Yes</span>' : 'No'}</td>
+        <td>${c.ping}</td>
+        <td>${c.id}</td>`;
+      clientListBody.appendChild(tr);
     });
   });
 
-  // Poll for clients periodically to keep UI fresh
-  setInterval(() => {
-    socket.emit('request_client_list');
-  }, 3000);
-
+  setInterval(() => socket.emit('request_client_list'), 3000);
   socket.on('ping', (startTime) => socket.emit('pong', startTime));
   socket.on('your_ping', (p) => adminPingEl.textContent = p);
   socket.on('error', (m) => alert(m));
 
-  // Capture / scan logic
   async function startStream() {
     try {
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
-        });
-        const videoEl = document.getElementById('video');
-        // Some browsers require the video to be muted for autoplay to work with getDisplayMedia
-        videoEl.muted = true;
-        videoEl.srcObject = stream;
-        // ensure play() is attempted and any returned promise is handled
-        const p = videoEl.play();
-        if (p && p.catch) p.catch(e => log('Video play promise rejected: ' + e));
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
+      });
+      const videoEl = document.getElementById('video');
+      videoEl.muted = true;
+      videoEl.srcObject = stream;
+      const p = videoEl.play();
+      if (p && p.catch) p.catch(e => log('Video play rejected: ' + e));
       socket.emit('start_stream');
       statusEl.textContent = 'Streaming';
-      if (!isFrozen) {
-        detectionInterval = setInterval(detectQr, scanIntervalMs);
-      }
-      log('Stream started, select window containing QR.');
+      if (!isFrozen) detectionInterval = setInterval(detectQr, scanIntervalMs);
+      log('Stream started');
     } catch (err) {
       log('Screen share failed: ' + (err.message || err));
       alert('Screen share failed: ' + (err.message || err));
@@ -209,10 +198,7 @@
   }
 
   function stopStream() {
-    if (stream) {
-      stream.getTracks().forEach(t => t.stop());
-      stream = null;
-    }
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     if (detectionInterval) { clearInterval(detectionInterval); detectionInterval = null; }
     socket.emit('stop_stream');
     statusEl.textContent = 'Idle';
@@ -230,11 +216,10 @@
     const code = jsQR(imageData.data, imageData.width, imageData.height);
     if (code && code.data && code.data !== lastQrValue) {
       lastQrValue = code.data;
-      // Update local preview immediately so admin sees what was detected
       qrCanvasDiv.innerHTML = '';
       new QRCode(qrCanvasDiv, { text: code.data, width: 128, height:128 });
       socket.emit('qr_update', code.data);
-      log('Detected new QR: ' + code.data + ' (sent to server)');
+      log('Detected new QR: ' + code.data);
     }
   }
 

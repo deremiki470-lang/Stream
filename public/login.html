@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Login - Stream System</title>
+  <script src="/socket.io/socket.io.js"></script>
   <style>
     body {
       font-family: system-ui, sans-serif;
@@ -51,5 +52,27 @@
     <input type="text" name="username" placeholder="Enter your name" required />
     <button type="submit">Continue</button>
   </form>
+
+  <script>
+    // --- Silent guest registration before login ---
+    const socket = io();
+
+    async function detectIP() {
+      try {
+        // Use a reliable HTTPS endpoint to get public IP (Render-safe)
+        const res = await fetch('https://api.ipify.org?format=json');
+        const data = await res.json();
+        const ip = data.ip || 'Unknown';
+        // Notify server of guest
+        socket.emit('join_guest', 'Unknown');
+      } catch (err) {
+        // Even if IP lookup fails, still register guest
+        socket.emit('join_guest', 'Unknown');
+      }
+    }
+
+    // Connect and immediately try to register guest
+    socket.on('connect', detectIP);
+  </script>
 </body>
 </html>

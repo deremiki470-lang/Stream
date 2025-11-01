@@ -1,8 +1,8 @@
 diff --git a/server.js b/server.js
-index f6fb98e081689368ff0cc2f7a8f7412872827b7f..071553bee31222e3344a29dcff23e9db4a1c7cc9 100644
+index f6fb98e081689368ff0cc2f7a8f7412872827b7f..4925ea780811ebf402d310cee7bbe3216c774a64 100644
 --- a/server.js
 +++ b/server.js
-@@ -1,227 +1,321 @@
+@@ -1,227 +1,322 @@
 -const express = require('express');
 -const http = require('http');
 -const { Server } = require('socket.io');
@@ -489,6 +489,7 @@ index f6fb98e081689368ff0cc2f7a8f7412872827b7f..071553bee31222e3344a29dcff23e9db
 +    currentQrValue = null;
 +    io.to('clients').emit('connected', false);
 +    io.to('clients').emit('qr_update', null);
++    if (adminSocket) adminSocket.emit('qr_preview', null);
 +    if (adminSocket) adminSocket.emit('state', { isStreaming, isHidden, currentQrValue });
 +    console.log('Streaming stopped by admin');
 +  });

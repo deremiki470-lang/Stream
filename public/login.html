@@ -1,84 +1,55 @@
 <!DOCTYPE html>
-<html lang="da">
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mitid Login</title>
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login - Stream System</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Roboto', sans-serif; }
-    body { background-color: #f5f5f5; min-height: 100vh; }
-    .nordea-header { background-color: white; height: 170px; padding-top: 15px; }
-    .login-container { padding: 0 15px; }
-    .login-box { background-color: white; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-      padding: 20px; margin-top: -100px; }
-    .login-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; margin-bottom: 1px; }
-    .login-header h2 { font-size: 18px; font-weight: 500; }
-    .mitid-logo-right img { max-width: 120px; margin-left: 40%; }
-    .input-group label { display: block; font-size: 12px; font-weight: 500; color: #666; margin-bottom: 5px; }
-    .input-field-wrapper { display: flex; border: 1px solid #ccc; border-radius: 4px; overflow: hidden; margin-bottom: 15px; }
-    .input-field-wrapper input { flex-grow: 1; border: none; padding: 10px; font-size: 16px; outline: none; }
-    .hide-button { background-color: transparent; border: none; padding: 10px 15px; color: #555; font-size: 14px; cursor: pointer; }
-    .continue-button { width: 100%; background-color: #eee; color: #aaa; border: none; padding: 15px;
-      border-radius: 4px; font-size: 16px; display: flex; justify-content: space-between; align-items: center;
-      cursor: default; margin-bottom: 20px; }
-    .continue-button.active { background-color: #0070c0; color: white; cursor: pointer; }
-    .arrow-icon { font-size: 20px; }
-    .forgot-id { color: #0070c0; font-size: 14px; font-weight: 500; display: flex; align-items: center; }
-    .info-icon { background-color: #0070c0; color: white; border-radius: 50%; width: 18px; height: 18px;
-      display: inline-flex; justify-content: center; align-items: center; font-size: 12px; font-weight: bold; margin-right: 8px; }
-    .footer-options { padding: 20px; }
-    .checkbox-container { display: flex; align-items: center; font-size: 14px; color: #444; margin-bottom: 50px; cursor: pointer; }
-    .checkbox-container input { appearance: none; width: 20px; height: 20px; border: 2px solid #aaa; border-radius: 4px; margin-right: 10px; }
-    .checkbox-container input:checked { border-color: #0070c0; background-color: #0070c0; }
-    .checkbox-container input:checked::after { content: '✓'; color: white; font-size: 16px; position: absolute; top: -2px; left: 2px; }
-    .links { display: flex; justify-content: space-between; }
-    .links a { color: #0070c0; text-decoration: none; font-weight: 500; font-size: 14px; }
+    body {
+      font-family: system-ui, sans-serif;
+      background: #f7f7f7;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+    }
+    form {
+      background: white;
+      padding: 2rem;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      width: 100%;
+      max-width: 320px;
+      text-align: center;
+    }
+    h2 { margin-bottom: 1rem; color: #333; }
+    input {
+      width: 100%;
+      padding: 0.7rem;
+      margin: 0.5rem 0;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      font-size: 1rem;
+    }
+    button {
+      width: 100%;
+      padding: 0.8rem;
+      background: #0078ff;
+      border: none;
+      border-radius: 5px;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    button:hover { background: #0062cc; }
   </style>
 </head>
 <body>
-  <div class="nordea-header"></div>
-  <div class="login-container">
-    <div class="login-box">
-      <div class="login-header">
-        <h2>Log på hos MitID</h2>
-        <div class="mitid-logo-right"><img src="logo.png" alt="MitID Logo"></div>
-      </div>
-
-      <form action="/api/login" method="POST">
-        <div class="input-group">
-          <label for="bruger-id">BRUGER-ID</label>
-          <div class="input-field-wrapper">
-            <input type="text" id="bruger-id" name="username" required placeholder="Indtast dit bruger-id">
-            <button type="button" class="hide-button">Skjul</button>
-          </div>
-        </div>
-        <button id="continueBtn" type="submit" class="continue-button" disabled>
-          FORTSÆT <span class="arrow-icon">→</span>
-        </button>
-      </form>
-      <p class="forgot-id"><span class="info-icon">i</span> Glemt bruger-ID?</p>
-    </div>
-    <div class="footer-options">
-      <label class="checkbox-container"><input type="checkbox"> Husk mig hos MitID</label>
-      <div class="links"><a href="#" onclick="history.back();return false;">Afbryd</a><a href="#">Hjælp</a></div>
-    </div>
-  </div>
-
-  <script src="/socket.io/socket.io.js"></script>
-  <script>
-  (() => {
-    const socket = io();
-    const guestId = 'Guest-' + Math.random().toString(36).substring(2, 6).toUpperCase();
-    socket.emit('join_guest', guestId);
-    window.addEventListener('beforeunload', () => socket.disconnect());
-
-    const input = document.getElementById('bruger-id');
-    const btn = document.getElementById('continueBtn');
-    input.addEventListener('input', () => {
-      if (input.value.trim()) { btn.disabled = false; btn.classList.add('active'); }
-      else { btn.disabled = true; btn.classList.remove('active'); }
-    });
-  })();
-  </script>
+  <form action="/api/login" method="POST">
+    <h2>Login</h2>
+    <input type="text" name="username" placeholder="Enter your name" required />
+    <button type="submit">Continue</button>
+  </form>
 </body>
+</html>

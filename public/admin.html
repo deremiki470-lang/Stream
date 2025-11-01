@@ -46,6 +46,19 @@ button.freeze:hover { background: #ec971f; }
   align-items: center;
   justify-content: center;
 }
+#videoContainer {
+  margin-top: 15px;
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 0 6px rgba(0,0,0,0.2);
+}
+#video {
+  width: 640px;
+  height: 360px;
+  display: block;
+  object-fit: cover;
+}
 #clientTable {
   width: 100%;
   max-width: 800px;
@@ -60,7 +73,6 @@ button.freeze:hover { background: #ec971f; }
 }
 #clientTable th { background: #e6e6e6; }
 .status { font-weight: bold; color: #0078ff; }
-video, canvas {display:none;}
 </style>
 </head>
 <body>
@@ -74,8 +86,10 @@ video, canvas {display:none;}
   <div id="qrPreview">No active QR</div>
   <div class="status" id="statusText">Status: Inactive</div>
 
-  <video id="video" autoplay muted></video>
-  <canvas id="canvas"></canvas>
+  <div id="videoContainer">
+    <video id="video" autoplay muted playsinline></video>
+  </div>
+  <canvas id="canvas" style="display:none;"></canvas>
 
   <table id="clientTable">
     <thead>
@@ -112,7 +126,7 @@ const statusText = document.getElementById('statusText');
 const clientBody = document.getElementById('clientBody');
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
 socket.emit('join', 'admin');
 

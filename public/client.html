@@ -57,12 +57,15 @@
     const statusEl = document.getElementById('status');
     const infoEl = document.getElementById('clientDetails');
 
+    // Identify this socket as a client (after login)
     socket.emit('join', 'client');
 
+    // Server confirms connection
     socket.on('connected', () => {
       statusEl.textContent = 'Connected to server';
     });
 
+    // Receive QR updates from admin
     socket.on('qr_update', (value) => {
       qrCanvas.innerHTML = '';
       if (value) {
@@ -77,13 +80,15 @@
       }
     });
 
+    // Stream status feedback from admin
     socket.on('stream_status', (isStreaming) => {
       statusEl.textContent = isStreaming ? 'Admin started streaming' : 'Stream stopped';
     });
 
+    // Respond to ping for latency updates
     socket.on('ping', (t) => socket.emit('pong', t));
 
-    // This will let admin see your info in the dashboard
+    // Optional: future use (not visible to user)
     socket.on('client_info', (data) => {
       infoEl.textContent = `${data.ip} • ${data.city}, ${data.region}, ${data.country} • ${data.isp}`;
     });

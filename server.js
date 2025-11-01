@@ -1,8 +1,4 @@
-diff --git a/server.js b/server.js
-index f6fb98e081689368ff0cc2f7a8f7412872827b7f..4925ea780811ebf402d310cee7bbe3216c774a64 100644
---- a/server.js
-+++ b/server.js
-@@ -1,227 +1,322 @@
+
 -const express = require('express');
 -const http = require('http');
 -const { Server } = require('socket.io');
@@ -552,3 +548,4 @@ index f6fb98e081689368ff0cc2f7a8f7412872827b7f..4925ea780811ebf402d310cee7bbe321
 +
 +const PORT = process.env.PORT || 5000;
 +server.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
+

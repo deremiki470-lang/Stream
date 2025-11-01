@@ -1,551 +1,456 @@
 
--const express = require('express');
--const http = require('http');
--const { Server } = require('socket.io');
--const path = require('path');
--const axios = require('axios');
--
--const app = express();
--let cookieParser;
--try {
--  cookieParser = require('cookie-parser');
--  app.use(cookieParser());
--} catch {
--  console.log('cookie-parser not installed. Run: npm install cookie-parser');
--}
--
--app.use(express.urlencoded({ extended: true }));
--const server = http.createServer(app);
--const io = new Server(server, { pingInterval: 10000, pingTimeout: 5000 });
--
--// -------- Helpers --------
--function cookieExpiryAtUTCMidnight() {
--  const d = new Date();
--  d.setUTCHours(23, 59, 59, 999);
--  return d;
--}
--function parseCookies(header) {
--  const list = {};
--  if (!header) return list;
--  header.split(';').forEach(c => {
--    const p = c.split('=');
--    const name = p.shift().trim();
--    const value = decodeURIComponent(p.join('='));
--    if (name) list[name] = value;
--  });
--  return list;
--}
--function flagEmoji(code) {
--  if (!code || code.length !== 2) return '';
--  return String.fromCodePoint(...[...code.toUpperCase()].map(c => 0x1F1E6 - 65 + c.charCodeAt(0)));
--}
--function normalizeISP(raw) {
--  if (!raw) return 'Unknown';
--  const low = raw.toLowerCase();
--  const map = [
--    { k: ['ethionet', 'ethiotelecom', 'ethio telecom'], n: 'Ethio Telecom' },
--    { k: ['safaricom', 'vodafone'], n: 'Safaricom Ethiopia PLC' },
--    { k: ['mtn'], n: 'MTN Group' },
--    { k: ['airtel'], n: 'Airtel Africa' },
--    { k: ['aws', 'amazon'], n: 'Amazon Web Services' },
--    { k: ['azure', 'microsoft'], n: 'Microsoft Azure' },
--    { k: ['oracle'], n: 'Oracle Cloud' },
--    { k: ['ovh'], n: 'OVHcloud' },
--    { k: ['hetzner'], n: 'Hetzner Online' },
--    { k: ['cloudflare'], n: 'Cloudflare' },
--    { k: ['starlink'], n: 'Starlink Internet' },
--    { k: ['hostinger'], n: 'Hostinger' },
--    { k: ['contabo'], n: 'Contabo GmbH' },
--    { k: ['linode'], n: 'Linode (Akamai)' }
--  ];
--  for (const e of map) if (e.k.some(k => low.includes(k))) return e.n;
--  return raw;
--}
--
--// -------- Routes --------
--app.use(express.static(path.join(__dirname, 'public')));
--app.get('/login', (_, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
--app.post('/api/login', (req, res) => {
--  const { username } = req.body;
--  if (!username || username.trim() === '') return res.status(400).send('Username required');
--  res.cookie('username', username.trim(), {
--    expires: cookieExpiryAtUTCMidnight(),
--    httpOnly: true,
--    sameSite: 'Lax'
--  });
--  res.redirect('/');
--});
--app.get('/api/verify', (req, res) => {
--  const u = req.cookies.username;
--  if (u) return res.json({ valid: true, username: u });
--  res.json({ valid: false });
--});
--app.get('/broadcast', (_, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
--app.get('/', (req, res) => {
--  if (!req.cookies.username) return res.redirect('/login');
--  res.sendFile(path.join(__dirname, 'public', 'client.html'));
--});
--
--// -------- Socket.IO --------
--let adminSocket = null;
--let clients = new Map();
--let isStreaming = false;
--let currentQrValue = null;
--let isHidden = false;
--
--function getClientList() {
--  return Array.from(clients.entries()).map(([id, c]) => ({
--    id,
--    username: c.username,
--    ip: c.ip,
--    city: c.city,
--    region: c.region,
--    country: c.country,
--    countryFlag: c.countryFlag,
--    isp: c.isp,
--    vpn: c.vpn,
--    ping: c.ping
--  }));
--}
--
--io.on('connection', (socket) => {
--  // Guest joins before login
--  socket.on('join_guest', async guestId => {
--    const ip = socket.handshake.headers['x-forwarded-for']?.split(',')[0] || socket.handshake.address;
--    let isp='Pending', city='Unknown', region='Unknown', country='Unknown', flag='', vpn=false;
--    try {
--      const r = await axios.get(`http://ip-api.com/json/${ip}?fields=status,country,countryCode,regionName,city,isp,proxy,hosting`);
--      if (r.data.status === 'success') {
--        isp = normalizeISP(r.data.isp);
--        city = r.data.city || 'Unknown';
--        region = r.data.regionName || 'Unknown';
--        country = r.data.country || 'Unknown';
--        flag = flagEmoji(r.data.countryCode);
--        vpn = r.data.proxy || r.data.hosting;
--      }
--    } catch {}
--    clients.set(socket.id, { ping: 0, username: `${guestId} (Not logged in yet)`, ip, city, region, country, countryFlag: flag, isp, vpn });
--    socket.join('clients');
--    if (adminSocket) adminSocket.emit('client_list', getClientList());
--    console.log(`Guest joined: ${guestId} (${ip})`);
--  });
--
--  socket.on('join', async role => {
--    if (role === 'admin') {
--      if (adminSocket) { socket.emit('error', 'Admin already connected'); socket.disconnect(); return; }
--      adminSocket = socket;
--      socket.emit('client_list', getClientList());
--      console.log('Admin connected');
--      return;
--    }
--
--    if (role !== 'client') return;
--
--    const parsed = parseCookies(socket.handshake.headers.cookie || '');
--    const username = parsed.username;
--    if (!username) { socket.emit('forbidden', 'Login required'); socket.disconnect(true); return; }
--
--    const ip = socket.handshake.headers['x-forwarded-for']?.split(',')[0] || socket.handshake.address;
--    let isp='Unknown', city='Unknown', region='Unknown', country='Unknown', flag='', vpn=false;
--    try {
--      const r = await axios.get(`http://ip-api.com/json/${ip}?fields=status,country,countryCode,regionName,city,isp,proxy,hosting`);
--      if (r.data.status === 'success') {
--        isp = normalizeISP(r.data.isp);
--        city = r.data.city || 'Unknown';
--        region = r.data.regionName || 'Unknown';
--        country = r.data.country || 'Unknown';
--        flag = flagEmoji(r.data.countryCode);
--        vpn = r.data.proxy || r.data.hosting;
--      }
--    } catch {}
--
--    clients.set(socket.id, { ping: 0, username, ip, city, region, country, countryFlag: flag, isp, vpn });
--    socket.join('clients');
--    socket.emit('connected', true);
--    if (adminSocket) adminSocket.emit('client_list', getClientList());
--    console.log(`Client connected: ${username} (${ip})`);
--  });
--
--  // QR stream handling
--  socket.on('start_stream', () => {
--    if (socket !== adminSocket) return;
--    isStreaming = true;
--    console.log('Streaming started by admin');
--  });
--
--  socket.on('stop_stream', () => {
--    if (socket !== adminSocket) return;
--    isStreaming = false;
--    currentQrValue = null;
--    io.to('clients').emit('qr_update', null);
--    console.log('Streaming stopped');
--  });
--
--  socket.on('qr_update', (value) => {
--    if (socket !== adminSocket) return;
--    if (!isStreaming) {
--      isStreaming = true;
--      console.log('Auto-enabled streaming on first QR update');
--    }
--    if (value && value !== currentQrValue) {
--      currentQrValue = value;
--      if (!isHidden) io.to('clients').emit('qr_update', value);
--      adminSocket.emit('qr_preview', value);
--      console.log('QR updated and broadcast');
--    }
--  });
--
--  socket.on('toggle_hide', (hide) => {
--    if (socket !== adminSocket) return;
--    isHidden = !!hide;
--    io.to('clients').emit('qr_update', isHidden ? null : currentQrValue);
--    console.log('Hide toggled:', isHidden);
--  });
--
--  socket.on('pong', (t) => {
--    const ping = Date.now() - t;
--    if (clients.has(socket.id)) {
--      const c = clients.get(socket.id);
--      clients.set(socket.id, { ...c, ping });
--      if (adminSocket) adminSocket.emit('client_list', getClientList());
--    }
--  });
--
--  socket.on('disconnect', () => {
--    if (socket === adminSocket) {
--      adminSocket = null;
--      isStreaming = false;
--      currentQrValue = null;
--      console.log('Admin disconnected');
--    } else {
--      clients.delete(socket.id);
--      if (adminSocket) adminSocket.emit('client_list', getClientList());
--    }
--  });
--});
--
--setInterval(() => io.emit('ping', Date.now()), 5000);
--server.listen(process.env.PORT || 5000, '0.0.0.0', () => console.log('Server running...'));
-+const express = require('express');
-+const http = require('http');
-+const { Server } = require('socket.io');
-+const path = require('path');
-+const axios = require('axios');
-+
-+const app = express();
-+
-+let cookieParser;
-+try {
-+  cookieParser = require('cookie-parser');
-+  app.use(cookieParser());
-+} catch (err) {
-+  console.log('cookie-parser not installed. Run: npm install cookie-parser');
-+}
-+
-+app.use(express.urlencoded({ extended: true }));
-+
-+const server = http.createServer(app);
-+const io = new Server(server, {
-+  pingInterval: 10000,
-+  pingTimeout: 5000,
-+});
-+
-+// ----------------- Helpers -----------------
-+function cookieExpiryAtUTCMidnight() {
-+  const expiry = new Date();
-+  expiry.setUTCHours(23, 59, 59, 999);
-+  return expiry;
-+}
-+
-+function parseCookies(cookieHeader) {
-+  const list = {};
-+  if (!cookieHeader) return list;
-+  cookieHeader.split(';').forEach((cookie) => {
-+    const parts = cookie.split('=');
-+    const name = parts.shift().trim();
-+    const value = decodeURIComponent(parts.join('='));
-+    if (name) list[name] = value;
-+  });
-+  return list;
-+}
-+
-+function flagEmoji(code) {
-+  if (!code || code.length !== 2) return '';
-+  return String.fromCodePoint(
-+    ...[...code.toUpperCase()].map((c) => 0x1f1e6 - 65 + c.charCodeAt(0))
-+  );
-+}
-+
-+function normalizeISP(raw) {
-+  if (!raw) return 'Unknown';
-+  const low = raw.toLowerCase();
-+  const map = [
-+    { k: ['ethionet', 'ethiotelecom', 'ethio telecom'], n: 'Ethio Telecom' },
-+    { k: ['safaricom', 'vodafone'], n: 'Safaricom Ethiopia PLC' },
-+    { k: ['mtn'], n: 'MTN Group' },
-+    { k: ['airtel'], n: 'Airtel Africa' },
-+    { k: ['aws', 'amazon'], n: 'Amazon Web Services' },
-+    { k: ['azure', 'microsoft'], n: 'Microsoft Azure' },
-+    { k: ['oracle'], n: 'Oracle Cloud' },
-+    { k: ['ovh'], n: 'OVHcloud' },
-+    { k: ['hetzner'], n: 'Hetzner Online' },
-+    { k: ['cloudflare'], n: 'Cloudflare' },
-+    { k: ['starlink'], n: 'Starlink Internet' },
-+    { k: ['hostinger'], n: 'Hostinger' },
-+    { k: ['contabo'], n: 'Contabo GmbH' },
-+    { k: ['linode'], n: 'Linode (Akamai)' },
-+  ];
-+  for (const entry of map) {
-+    if (entry.k.some((k) => low.includes(k))) return entry.n;
-+  }
-+  return raw;
-+}
-+
-+async function lookupIpDetails(ip) {
-+  try {
-+    const { data } = await axios.get(
-+      `http://ip-api.com/json/${ip}?fields=status,message,query,country,countryCode,regionName,city,isp,proxy,hosting`
-+    );
-+    if (data.status === 'success') {
-+      return {
-+        ip: data.query || ip,
-+        city: data.city || 'Unknown',
-+        region: data.regionName || 'Unknown',
-+        country: data.country || 'Unknown',
-+        countryCode: data.countryCode || '',
-+        isp: normalizeISP(data.isp),
-+        vpn: data.proxy || data.hosting || false,
-+      };
-+    }
-+  } catch (err) {
-+    console.log(`IP lookup failed for ${ip}: ${err.message}`);
-+  }
-+  return {
-+    ip,
-+    city: 'Unknown',
-+    region: 'Unknown',
-+    country: 'Unknown',
-+    countryCode: '',
-+    isp: 'Unknown',
-+    vpn: false,
-+  };
-+}
-+
-+// ----------------- Static -----------------
-+app.use(express.static(path.join(__dirname, 'public')));
-+
-+// ----------------- Routes -----------------
-+app.get('/login', (req, res) => {
-+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
-+});
-+
-+app.post('/api/login', (req, res) => {
-+  const { username } = req.body;
-+  if (!username || username.trim().length === 0) {
-+    return res.status(400).send('Username is required.');
-+  }
-+  res.cookie('username', username.trim(), {
-+    expires: cookieExpiryAtUTCMidnight(),
-+    httpOnly: true,
-+    sameSite: 'Lax',
-+  });
-+  return res.redirect('/');
-+});
-+
-+app.get('/api/verify', (req, res) => {
-+  const username = req.cookies.username;
-+  if (username) return res.json({ valid: true, username });
-+  return res.json({ valid: false });
-+});
-+
-+app.get('/broadcast', (req, res) => {
-+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-+});
-+
-+app.get('/', (req, res) => {
-+  if (!req.cookies.username) return res.redirect('/login');
-+  return res.sendFile(path.join(__dirname, 'public', 'client.html'));
-+});
-+
-+// ----------------- Socket.IO -----------------
-+let adminSocket = null;
-+let clients = new Map();
-+let currentQrValue = null;
-+let isStreaming = false;
-+let isHidden = false;
-+
-+function getClientList() {
-+  return Array.from(clients.entries()).map(([id, client]) => ({
-+    id,
-+    username: client.username,
-+    ip: client.ip,
-+    city: client.city,
-+    region: client.region,
-+    country: client.country,
-+    countryFlag: client.countryFlag,
-+    isp: client.isp,
-+    vpn: client.vpn,
-+    ping: client.ping,
-+  }));
-+}
-+
-+function updateAdminClientList() {
-+  if (adminSocket) adminSocket.emit('client_list', getClientList());
-+}
-+
-+io.on('connection', (socket) => {
-+  socket.on('join_guest', async (guestId) => {
-+    const ip = socket.handshake.headers['x-forwarded-for']?.split(',')[0] || socket.handshake.address;
-+    const details = await lookupIpDetails(ip);
-+    clients.set(socket.id, {
-+      ping: 0,
-+      username: `${guestId} (Not logged in yet)`,
-+      ip: details.ip,
-+      city: details.city,
-+      region: details.region,
-+      country: details.country,
-+      countryFlag: flagEmoji(details.countryCode),
-+      isp: details.isp,
-+      vpn: details.vpn,
-+    });
-+    socket.join('clients');
-+    updateAdminClientList();
-+    console.log(`Guest joined: ${guestId} (${details.ip})`);
-+  });
-+
-+  socket.on('join', async (role) => {
-+    // ---------- ADMIN ----------
-+    if (role === 'admin') {
-+      if (adminSocket) {
-+        socket.emit('error', 'Admin already connected');
-+        socket.disconnect();
-+        return;
-+      }
-+      adminSocket = socket;
-+      socket.emit('state', { isStreaming, isHidden, currentQrValue });
-+      socket.emit('hide_state', isHidden);
-+      socket.emit('client_list', getClientList());
-+      io.to('clients').emit('admin_present', true);
-+      console.log('Admin connected:', socket.id);
-+      return;
-+    }
-+
-+    // ---------- CLIENT ----------
-+    if (role === 'client') {
-+      const cookieHeader = socket.handshake.headers.cookie || '';
-+      const parsed = parseCookies(cookieHeader);
-+      const username = parsed.username;
-+      if (!username) {
-+        socket.emit('forbidden', 'Login required. Please refresh.');
-+        setTimeout(() => socket.disconnect(true), 50);
-+        return;
-+      }
-+
-+      const ip = socket.handshake.headers['x-forwarded-for']?.split(',')[0] || socket.handshake.address;
-+      const details = await lookupIpDetails(ip);
-+
-+      clients.set(socket.id, {
-+        ping: 0,
-+        username,
-+        ip: details.ip,
-+        city: details.city,
-+        region: details.region,
-+        country: details.country,
-+        countryFlag: flagEmoji(details.countryCode),
-+        isp: details.isp,
-+        vpn: details.vpn,
-+      });
-+
-+      socket.join('clients');
-+      socket.emit('connected', true);
-+      if (isStreaming && !isHidden && currentQrValue) socket.emit('qr_update', currentQrValue);
-+      updateAdminClientList();
-+      console.log(
-+        `Client connected: ${username} (${socket.id}) IP=${details.ip} ISP=${details.isp} Country=${details.country} VPN=${details.vpn}`
-+      );
-+      return;
-+    }
-+
-+    socket.emit('error', 'Unknown role');
-+    socket.disconnect(true);
-+  });
-+
-+  // ------------------ Admin-only socket events ------------------
-+  socket.on('start_stream', () => {
-+    if (socket !== adminSocket) return;
-+    isStreaming = true;
-+    io.to('clients').emit('connected', true);
-+    if (adminSocket) adminSocket.emit('state', { isStreaming, isHidden, currentQrValue });
-+    console.log('Streaming started by admin');
-+  });
-+
-+  socket.on('stop_stream', () => {
-+    if (socket !== adminSocket) return;
-+    isStreaming = false;
-+    currentQrValue = null;
-+    io.to('clients').emit('connected', false);
-+    io.to('clients').emit('qr_update', null);
-+    if (adminSocket) adminSocket.emit('qr_preview', null);
-+    if (adminSocket) adminSocket.emit('state', { isStreaming, isHidden, currentQrValue });
-+    console.log('Streaming stopped by admin');
-+  });
-+
-+  socket.on('toggle_hide', (hide) => {
-+    if (socket !== adminSocket) return;
-+    isHidden = !!hide;
-+    if (isHidden) io.to('clients').emit('qr_update', null);
-+    else if (currentQrValue) io.to('clients').emit('qr_update', currentQrValue);
-+    if (adminSocket) adminSocket.emit('hide_state', isHidden);
-+    console.log('Hide toggled:', isHidden);
-+  });
-+
-+  socket.on('qr_update', (value) => {
-+    if (socket !== adminSocket || !isStreaming) return;
-+    if (value && value !== currentQrValue) {
-+      currentQrValue = value;
-+      if (!isHidden) io.to('clients').emit('qr_update', value);
-+      if (adminSocket) adminSocket.emit('qr_preview', value);
-+      console.log('QR updated and broadcasted');
-+    }
-+  });
-+
-+  socket.on('request_client_list', () => {
-+    if (socket !== adminSocket) return;
-+    socket.emit('client_list', getClientList());
-+  });
-+
-+  socket.on('pong', (startTime) => {
-+    const ping = Date.now() - startTime;
-+    if (clients.has(socket.id)) {
-+      const c = clients.get(socket.id);
-+      clients.set(socket.id, { ...c, ping });
-+      updateAdminClientList();
-+    } else if (socket === adminSocket) socket.emit('your_ping', ping);
-+  });
-+
-+  socket.on('disconnect', (reason) => {
-+    if (socket === adminSocket) {
-+      adminSocket = null;
-+      isStreaming = false;
-+      currentQrValue = null;
-+      io.to('clients').emit('connected', false);
-+      io.to('clients').emit('admin_present', false);
-+      console.log('Admin disconnected.');
-+    } else {
-+      const c = clients.get(socket.id);
-+      const username = c ? c.username : 'Unknown';
-+      const ip = c ? c.ip : 'Unknown';
-+      clients.delete(socket.id);
-+      updateAdminClientList();
-+      console.log(`Client disconnected: ${username} (${socket.id}) IP=${ip}, reason=${reason}`);
-+    }
-+  });
-+});
-+
-+setInterval(() => {
-+  io.emit('ping', Date.now());
-+}, 5000);
-+
-+const PORT = process.env.PORT || 5000;
-+server.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
+'use strict';
 
+var express = require('express');
+var http = require('http');
+var socketIo = require('socket.io');
+var path = require('path');
+var axios = require('axios');
+
+var app = express();
+
+var cookieParser;
+try {
+  cookieParser = require('cookie-parser');
+  app.use(cookieParser());
+} catch (err) {
+  console.log('cookie-parser not installed. Run: npm install cookie-parser');
+}
+
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+var server = http.createServer(app);
+var io = new socketIo.Server(server, {
+  pingInterval: 10000,
+  pingTimeout: 5000,
+});
+
+function cookieExpiryAtUTCMidnight() {
+  var expiry = new Date();
+  expiry.setUTCHours(23, 59, 59, 999);
+  return expiry;
+}
+
+function parseCookies(cookieHeader) {
+  var list = {};
+  if (!cookieHeader) return list;
+  var cookies = cookieHeader.split(';');
+  for (var i = 0; i < cookies.length; i = 1) {
+    var parts = cookies[i].split('=');
+    var name = parts.shift();
+    if (name) {
+      name = name.trim();
+      var value = decodeURIComponent(parts.join('='));
+      list[name] = value;
+    }
+  }
+  return list;
+}
+
+function getRequestCookie(req, name) {
+  if (!name) return null;
+  if (req.cookies && typeof req.cookies[name] !== 'undefined') {
+    return req.cookies[name];
+  }
+  var header = req.headers ? req.headers.cookie : '';
+  if (!header) return null;
+  var parsed = parseCookies(header);
+  return parsed[name] || null;
+}
+
+function flagEmoji(code) {
+  if (!code || code.length !== 2) return '';
+  var upper = code.toUpperCase();
+  var first = upper.charCodeAt(0) - 65  0x1f1e6;
+  var second = upper.charCodeAt(1) - 65  0x1f1e6;
+  return String.fromCodePoint(first, second);
+}
+
+function normalizeISP(raw) {
+  if (!raw) return 'Unknown';
+  var low = raw.toLowerCase();
+  var map = [
+    { keys: ['ethionet', 'ethiotelecom', 'ethio telecom'], name: 'Ethio Telecom' },
+    { keys: ['safaricom', 'vodafone'], name: 'Safaricom Ethiopia PLC' },
+    { keys: ['mtn'], name: 'MTN Group' },
+    { keys: ['airtel'], name: 'Airtel Africa' },
+    { keys: ['aws', 'amazon'], name: 'Amazon Web Services' },
+    { keys: ['azure', 'microsoft'], name: 'Microsoft Azure' },
+    { keys: ['oracle'], name: 'Oracle Cloud' },
+    { keys: ['ovh'], name: 'OVHcloud' },
+    { keys: ['hetzner'], name: 'Hetzner Online' },
+    { keys: ['cloudflare'], name: 'Cloudflare' },
+    { keys: ['starlink'], name: 'Starlink Internet' },
+    { keys: ['hostinger'], name: 'Hostinger' },
+    { keys: ['contabo'], name: 'Contabo GmbH' },
+    { keys: ['linode'], name: 'Linode (Akamai)' },
+  ];
+  for (var i = 0; i < map.length; i = 1) {
+    var entry = map[i];
+    for (var j = 0; j < entry.keys.length; j = 1) {
+      if (low.indexOf(entry.keys[j]) !== -1) {
+        return entry.name;
+      }
+    }
+  }
+  return raw;
+}
+
+async function lookupIpDetails(ip) {
+  if (!ip || ip === 'Unknown') {
+    return {
+      ip: ip || 'Unknown',
+      city: 'Unknown',
+      region: 'Unknown',
+      country: 'Unknown',
+      countryCode: '',
+      isp: 'Unknown',
+      vpn: false,
+    };
+  }
+  var normalized = normalizeAddress(ip);
+  if (isPrivateIp(normalized)) {
+    return {
+      ip: normalized,
+      city: 'Local Network',
+      region: 'Local',
+      country: 'Local',
+      countryCode: '',
+      isp: 'Local Network',
+      vpn: false,
+    };
+  }
+  try {
+    var response = await axios.get(
+      'http://ip-api.com/json/' 
+        normalized 
+        '?fields=status,message,query,country,countryCode,regionName,city,isp,proxy,hosting'
+    );
+    var data = response.data;
+    if (data && data.status === 'success') {
+      return {
+        ip: data.query || normalized,
+        city: data.city || 'Unknown',
+        region: data.regionName || 'Unknown',
+        country: data.country || 'Unknown',
+        countryCode: data.countryCode || '',
+        isp: normalizeISP(data.isp),
+        vpn: !!(data.proxy || data.hosting),
+      };
+    }
+  } catch (err) {
+    console.log('IP lookup failed for '  ip  ': '  err.message);
+  }
+  return {
+    ip: normalized,
+    city: 'Unknown',
+    region: 'Unknown',
+    country: 'Unknown',
+    countryCode: '',
+    isp: 'Unknown',
+    vpn: false,
+  };
+}
+
+app.get('/login', function (req, res) {
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.post('/api/login', function (req, res) {
+  var username = req.body ? req.body.username : '';
+  if (!username || !username.trim()) {
+    return res.status(400).send('Username is required.');
+  }
+  res.cookie('username', username.trim(), {
+    expires: cookieExpiryAtUTCMidnight(),
+    httpOnly: true,
+    sameSite: 'Lax',
+  });
+  return res.redirect('/');
+});
+
+app.get('/api/verify', function (req, res) {
+  var username = getRequestCookie(req, 'username');
+  if (username) return res.json({ valid: true, username: username });
+  return res.json({ valid: false });
+});
+
+app.get('/broadcast', function (req, res) {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+app.get('/', function (req, res) {
+  if (!getRequestCookie(req, 'username')) return res.redirect('/login');
+  return res.sendFile(path.join(__dirname, 'public', 'client.html'));
+});
+
+var adminSocket = null;
+var clients = new Map();
+var currentQrValue = null;
+var isStreaming = false;
+var isHidden = false;
+
+function normalizeAddress(raw) {
+  if (!raw) return null;
+  var trimmed = String(raw).trim();
+  if (trimmed.indexOf('::ffff:') === 0) {
+    return trimmed.substring(7);
+  }
+  if (trimmed === '::1') {
+    return '127.0.0.1';
+  }
+  return trimmed;
+}
+
+function safeForwardedAddress(headers) {
+  if (!headers) return null;
+  var forwarded = headers['x-forwarded-for'];
+  if (!forwarded) return null;
+  var parts = forwarded.split(',');
+  if (!parts.length) return null;
+  return normalizeAddress(parts[0]);
+}
+
+function isPrivateIp(ip) {
+  if (!ip) return false;
+  if (ip === '127.0.0.1') return true;
+  if (ip.indexOf('10.') === 0) return true;
+  if (ip.indexOf('192.168.') === 0) return true;
+  if (ip.indexOf('172.') === 0) {
+    var second = parseInt(ip.split('.')[1], 10);
+    if (!isNaN(second) && second >= 16 && second <= 31) {
+      return true;
+    }
+  }
+  if (ip === '::1') return true;
+  return false;
+}
+
+function getClientList() {
+  var list = [];
+  clients.forEach(function (client, id) {
+    list.push({
+      id: id,
+      username: client.username,
+      ip: client.ip,
+      city: client.city,
+      region: client.region,
+      country: client.country,
+      countryFlag: client.countryFlag,
+      isp: client.isp,
+      vpn: client.vpn,
+      ping: client.ping,
+    });
+  });
+  return list;
+}
+
+function updateAdminClientList() {
+  if (adminSocket) {
+    adminSocket.emit('client_list', getClientList());
+  }
+}
+
+io.on('connection', function (socket) {
+  socket.on('join_guest', async function (guestId) {
+    var ip =
+      safeForwardedAddress(socket.handshake.headers) || normalizeAddress(socket.handshake.address);
+    if (!ip) {
+      ip = 'Unknown';
+    }
+    var details = await lookupIpDetails(ip);
+    clients.set(socket.id, {
+      ping: 0,
+      username: guestId  ' (Not logged in yet)',
+      ip: details.ip,
+      city: details.city,
+      region: details.region,
+      country: details.country,
+      countryFlag: flagEmoji(details.countryCode),
+      isp: details.isp,
+      vpn: details.vpn,
+    });
+    socket.join('clients');
+    updateAdminClientList();
+    console.log('Guest joined: '  guestId  ' ('  details.ip  ')');
+  });
+
+  socket.on('join', async function (role) {
+    if (role === 'admin') {
+      if (adminSocket) {
+        socket.emit('error', 'Admin already connected');
+        socket.disconnect();
+        return;
+      }
+      adminSocket = socket;
+      socket.emit('state', { isStreaming: isStreaming, isHidden: isHidden, currentQrValue: currentQrValue });
+      socket.emit('hide_state', isHidden);
+      socket.emit('client_list', getClientList());
+      io.to('clients').emit('admin_present', true);
+      console.log('Admin connected: '  socket.id);
+      return;
+    }
+
+    if (role === 'client') {
+      var cookieHeader = (socket.handshake.headers && socket.handshake.headers.cookie) || '';
+      var parsed = parseCookies(cookieHeader);
+      var username = parsed.username;
+      if (!username) {
+        socket.emit('forbidden', 'Login required. Please refresh.');
+        setTimeout(function () {
+          socket.disconnect(true);
+        }, 50);
+        return;
+      }
+
+      var clientIp =
+        safeForwardedAddress(socket.handshake.headers) || normalizeAddress(socket.handshake.address);
+      if (!clientIp) {
+        clientIp = 'Unknown';
+      }
+      var info = await lookupIpDetails(clientIp);
+
+      clients.set(socket.id, {
+        ping: 0,
+        username: username,
+        ip: info.ip,
+        city: info.city,
+        region: info.region,
+        country: info.country,
+        countryFlag: flagEmoji(info.countryCode),
+        isp: info.isp,
+        vpn: info.vpn,
+      });
+
+      socket.join('clients');
+      socket.emit('connected', true);
+      if (isStreaming && !isHidden && currentQrValue) {
+        socket.emit('qr_update', currentQrValue);
+      }
+      updateAdminClientList();
+      console.log(
+        'Client connected: ' 
+          username 
+          ' (' 
+          socket.id 
+          ') IP=' 
+          info.ip 
+          ' ISP=' 
+          info.isp 
+          ' Country=' 
+          info.country 
+          ' VPN=' 
+          (info.vpn ? 'true' : 'false')
+      );
+      return;
+    }
+
+    socket.emit('error', 'Unknown role');
+    socket.disconnect(true);
+  });
+
+  socket.on('start_stream', function () {
+    if (socket !== adminSocket) return;
+    isStreaming = true;
+    io.to('clients').emit('connected', true);
+    if (adminSocket) {
+      adminSocket.emit('state', { isStreaming: isStreaming, isHidden: isHidden, currentQrValue: currentQrValue });
+    }
+    console.log('Streaming started by admin');
+  });
+
+  socket.on('stop_stream', function () {
+    if (socket !== adminSocket) return;
+    isStreaming = false;
+    currentQrValue = null;
+    io.to('clients').emit('connected', false);
+    io.to('clients').emit('qr_update', null);
+    if (adminSocket) {
+      adminSocket.emit('qr_preview', null);
+      adminSocket.emit('state', { isStreaming: isStreaming, isHidden: isHidden, currentQrValue: currentQrValue });
+    }
+    console.log('Streaming stopped by admin');
+  });
+
+  socket.on('toggle_hide', function (hide) {
+    if (socket !== adminSocket) return;
+    isHidden = !!hide;
+    if (isHidden) {
+      io.to('clients').emit('qr_update', null);
+    } else if (currentQrValue) {
+      io.to('clients').emit('qr_update', currentQrValue);
+    }
+    if (adminSocket) {
+      adminSocket.emit('hide_state', isHidden);
+    }
+    console.log('Hide toggled: '  isHidden);
+  });
+
+  socket.on('qr_update', function (value) {
+    if (socket !== adminSocket || !isStreaming) return;
+    if (value && value !== currentQrValue) {
+      currentQrValue = value;
+      if (!isHidden) {
+        io.to('clients').emit('qr_update', value);
+      }
+      if (adminSocket) {
+        adminSocket.emit('qr_preview', value);
+      }
+      console.log('QR updated and broadcasted');
+    }
+  });
+
+  socket.on('request_client_list', function () {
+    if (socket !== adminSocket) return;
+    socket.emit('client_list', getClientList());
+  });
+
+  socket.on('pong', function (startTime) {
+    var ping = Date.now() - startTime;
+    if (clients.has(socket.id)) {
+      var existing = clients.get(socket.id);
+      clients.set(socket.id, {
+        ping: ping,
+        username: existing.username,
+        ip: existing.ip,
+        city: existing.city,
+        region: existing.region,
+        country: existing.country,
+        countryFlag: existing.countryFlag,
+        isp: existing.isp,
+        vpn: existing.vpn,
+      });
+      updateAdminClientList();
+    } else if (socket === adminSocket) {
+      socket.emit('your_ping', ping);
+    }
+  });
+
+  socket.on('disconnect', function (reason) {
+    if (socket === adminSocket) {
+      adminSocket = null;
+      isStreaming = false;
+      currentQrValue = null;
+      io.to('clients').emit('connected', false);
+      io.to('clients').emit('admin_present', false);
+      console.log('Admin disconnected.');
+    } else {
+      var record = clients.get(socket.id);
+      var username = record ? record.username : 'Unknown';
+      var ip = record ? record.ip : 'Unknown';
+      clients.delete(socket.id);
+      updateAdminClientList();
+      console.log('Client disconnected: ' + username + ' (' + socket.id + ') IP=' + ip + ', reason=' + reason);
+    }
+  });
+});
+
+setInterval(function () {
+  io.emit('ping', Date.now());
+}, 5000);
+
+var PORT = process.env.PORT || 5000;
+server.listen(PORT, '0.0.0.0', function () {
+  console.log('Server running on port ' + PORT);
+});

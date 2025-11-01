@@ -19,7 +19,7 @@ body {
 }
 #qr { margin-top: 12px; }
 #msg { color: #333; text-align: center; }
-img.logo { width: 100px; margin-bottom: 8px; }
+.logo { width: 100px; margin-bottom: 8px; }
 </style>
 </head>
 <body>
@@ -27,77 +27,63 @@ img.logo { width: 100px; margin-bottom: 8px; }
   <h2 id="msg">Verifierar session...</h2>
   <div id="qr"></div>
 
-  <script>
-  (async () => {
-    const msg = document.getElementById('msg');
-    const qrDiv = document.getElementById('qr');
+<script>
+(async () => {
+  const msg = document.getElementById('msg');
+  const qrDiv = document.getElementById('qr');
 
-    // Steg 1 – verifiera session med servern
-    try {
-      const res = await fetch('/api/verify', { credentials: 'same-origin' });
-      const obj = await res.json();
+  // Steg 1 — verifiera cookie-session med servern
+  try {
+    const res = await fetch('/api/verify', { credentials: 'same-origin' });
+    const obj = await res.json();
 
-      if (!obj.valid) {
-        msg.textContent = 'Åtkomst nekad: ogiltig session. Ladda om sidan.';
-        return;
-      }
-
-      msg.textContent = `Välkommen, ${obj.username} — ansluter...`;
-    } catch (err) {
-      msg.textContent = 'Serververifiering misslyckades. Försök igen senare.';
-      console.error(err);
+    if (!obj.valid) {
+      msg.textContent = 'Åtkomst nekad: ogiltig session.';
+      setTimeout(() => window.location.href = '/login', 1200);
       return;
     }
 
-    // Steg 2 – anslut via Socket.IO
-    const socket = io();
-    socket.emit('join', 'client');
+    msg.textContent = `Välkommen, ${obj.username} — ansluter...`;
+  } catch (err) {
+    msg.textContent = 'Serververifiering misslyckades. Försök igen senare.';
+    console.error(err);
+    return;
+  }
 
-    socket.on('connected', (ok) => {
-      if (!ok) {
-        msg.textContent = 'Frånkopplad / ingen aktiv sändning';
-        qrDiv.innerHTML = '';
-        return;
-      }
-      msg.textContent = 'Ansluten — väntar på QR...';
-    });
+  // Steg 2 — anslut till Socket.IO och gå med som klient
+  const socket = io();
+  socket.emit('join', 'client');
 
-    let adminPresent = true;
-    function setAdminPresent(present) {
-      adminPresent = !!present;
-      if (!adminPresent) {
-        msg.textContent = 'Återansluter... väntar på administratör';
-        qrDiv.innerHTML = '';
-      }
+  // Bekräftelse från servern
+  socket.on('connected', () => {
+    msg.textContent = 'Ansluten — väntar på QR...';
+  });
+
+  // När administratören sänder eller ändrar QR
+  socket.on('qr_update', (value) => {
+    qrDiv.innerHTML = '';
+    if (value) {
+      msg.textContent = 'QR aktiv';
+      new QRCode(qrDiv, { text: value, width: 256, height: 256 });
+    } else {
+      msg.textContent = 'QR dold eller inte tillgänglig';
     }
-    socket.on('admin_present', (present) => setAdminPresent(present));
+  });
 
-    setInterval(async () => {
-      if (adminPresent) return;
-      try {
-        const res = await fetch('/api/verify', { credentials: 'same-origin' });
-        const obj = await res.json();
-        if (obj.valid) socket.emit('join', 'client');
-      } catch (_) {}
-    }, 3000);
+  // Ping/pong för fördröjning
+  socket.on('ping', (t) => socket.emit('pong', t));
 
-    socket.on('qr_update', (value) => {
-      qrDiv.innerHTML = '';
-      if (value) {
-        msg.textContent = 'QR aktiv';
-        new QRCode(qrDiv, { text: value, width: 256, height: 256 });
-      } else {
-        msg.textContent = 'QR dold eller inte tillgänglig';
-      }
-    });
+  // Hantera förbjudna åtkomster
+  socket.on('forbidden', (m) => {
+    msg.textContent = m || 'Åtkomst nekad';
+    setTimeout(() => window.location.href = '/login', 1500);
+  });
 
-    socket.on('forbidden', (m) => {
-      msg.textContent = m || 'Åtkomst nekad';
-      setTimeout(() => socket.disconnect(), 100);
-    });
-
-    socket.on('ping', (t) => socket.emit('pong', t));
-  })();
-  </script>
+  // Vid frånkoppling, visa status
+  socket.on('disconnect', () => {
+    msg.textContent = 'Frånkopplad från servern.';
+  });
+})();
+</script>
 </body>
 </html>

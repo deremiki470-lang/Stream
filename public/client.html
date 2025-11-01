@@ -1,120 +1,101 @@
 <!doctype html>
-<html lang="en">
-<html lang="da">
+<html lang="sv">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Client - Support QR</title>
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-direction: column;
-      height: 100vh;
-      margin: 0;
-      background: #fafafa;
-    }
-    #qr { margin-top: 12px; }
-    #msg { color: #333; text-align: center; }
-    img.logo { width: 100px; margin-bottom: 8px; }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Klient - Support QR</title>
+<script src="/socket.io/socket.io.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<style>
+body {
+  font-family: Arial, sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  height: 100vh;
+  margin: 0;
+  background: #fafafa;
+}
+#qr { margin-top: 12px; }
+#msg { color: #333; text-align: center; }
+img.logo { width: 100px; margin-bottom: 8px; }
+</style>
 </head>
 <body>
   <img src="https://i.postimg.cc/WzDHPTPX/logo.jpg" class="logo" alt="logo">
-  <h2 id="msg">Verifying session...</h2>
-  <h2 id="msg_da">Verificerer session...</h2>
+  <h2 id="msg">Verifierar session...</h2>
   <div id="qr"></div>
 
   <script>
   (async () => {
     const msg = document.getElementById('msg');
-    const msgDa = document.getElementById('msg_da');
     const qrDiv = document.getElementById('qr');
 
-    // Step 1 — verify cookie session
+    // Steg 1 – verifiera session med servern
     try {
       const res = await fetch('/api/verify', { credentials: 'same-origin' });
       const obj = await res.json();
 
       if (!obj.valid) {
-        msg.textContent = 'Forbidden: invalid session. Please refresh.';
-        msgDa.textContent = 'Adgang nægtet: Ugyldig session. Opdater siden.';
+        msg.textContent = 'Åtkomst nekad: ogiltig session. Ladda om sidan.';
         return;
       }
 
-      msg.textContent = `Welcome, ${obj.username} — connecting...`;
-      msgDa.textContent = `Velkommen, ${obj.username} — opretter forbindelse...`;
+      msg.textContent = `Välkommen, ${obj.username} — ansluter...`;
     } catch (err) {
-      msg.textContent = 'Server verification failed. Try again later.';
-      msgDa.textContent = 'Serverbekræftelse mislykkedes. Prøv igen senere.';
+      msg.textContent = 'Serververifiering misslyckades. Försök igen senare.';
       console.error(err);
       return;
     }
 
-    // Step 2 — connect to Socket.IO and join as client
+    // Steg 2 – anslut via Socket.IO
     const socket = io();
     socket.emit('join', 'client');
 
-    // Confirm connection
     socket.on('connected', (ok) => {
       if (!ok) {
-        msg.textContent = 'Disconnected / no active stream';
-        msgDa.textContent = 'Afbrudt / ingen aktiv stream';
+        msg.textContent = 'Frånkopplad / ingen aktiv sändning';
         qrDiv.innerHTML = '';
         return;
       }
-      msg.textContent = 'Connected — waiting for QR...';
-      msgDa.textContent = 'Tilsluttet — venter på QR...';
+      msg.textContent = 'Ansluten — väntar på QR...';
     });
 
-    // Admin presence indicator
     let adminPresent = true;
     function setAdminPresent(present) {
       adminPresent = !!present;
       if (!adminPresent) {
-        msg.textContent = 'Reconnecting... waiting for admin to join';
-        msgDa.textContent = 'Genopretter forbindelse... venter på administrator';
+        msg.textContent = 'Återansluter... väntar på administratör';
         qrDiv.innerHTML = '';
       }
     }
-
     socket.on('admin_present', (present) => setAdminPresent(present));
 
-    // Retry loop every 3s if admin is offline
     setInterval(async () => {
       if (adminPresent) return;
       try {
         const res = await fetch('/api/verify', { credentials: 'same-origin' });
         const obj = await res.json();
         if (obj.valid) socket.emit('join', 'client');
-      } catch (_) { /* ignore */ }
+      } catch (_) {}
     }, 3000);
 
-    // When admin updates QR
     socket.on('qr_update', (value) => {
       qrDiv.innerHTML = '';
       if (value) {
-        msg.textContent = 'QR Active';
-        msgDa.textContent = 'QR aktiv';
+        msg.textContent = 'QR aktiv';
         new QRCode(qrDiv, { text: value, width: 256, height: 256 });
       } else {
-        msg.textContent = 'QR hidden or not available';
-        msgDa.textContent = 'QR skjult eller ikke tilgængelig';
+        msg.textContent = 'QR dold eller inte tillgänglig';
       }
     });
 
-    // Handle forbidden disconnects
     socket.on('forbidden', (m) => {
-      msg.textContent = m || 'Forbidden';
-      msgDa.textContent = m || 'Adgang nægtet';
+      msg.textContent = m || 'Åtkomst nekad';
       setTimeout(() => socket.disconnect(), 100);
     });
 
-    // ping/pong for latency
     socket.on('ping', (t) => socket.emit('pong', t));
   })();
   </script>

